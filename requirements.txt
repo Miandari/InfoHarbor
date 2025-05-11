@@ -1,0 +1,10 @@
+# Core dependencies
+langchain>=0.1.0
+langgraph>=0.0.20
+langchain-openai>=0.0.6
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+
+# API clients
+tavily-python>=0.2.3
+requests>=2.31.0
