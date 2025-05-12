@@ -118,15 +118,26 @@ jupyter notebook test.ipynb
 - LangChain
 - OpenAI API key (or compatible model provider)
 - Tavily API key for search capabilities
-- Additional API keys as required by your custom tools
+- ListenNotes API key for podcast recommendations
+
+## 🔐 Environment Setup
+
+Create a `.env` file in the root directory with the following variables:
+```
+OPENAI_API_KEY=your_openai_key
+TAVILY_API_KEY=your_tavily_key
+LISTENNOTES_API_KEY=your_listennotes_key
+```
+
+Make sure to keep this file private and never commit it to your repository.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
-
-## 📄 License
-
-[License information]
 
 ## 🙏 Acknowledgments
 
