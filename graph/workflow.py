@@ -35,7 +35,7 @@ def create_info_assistant():
     # 2. Define node functions
     
     # 2.1 Main agent node that handles conversation and dispatches to tools when needed
-    def main_agent(state: InfoAssistantState) -> Literal["podcast_tools", "news_tools", "respond", "END"]:
+    def main_agent(state: InfoAssistantState) -> Dict[str, Any]:
         """
         Main conversation agent that determines when to use specialized tools.
         
@@ -46,26 +46,26 @@ def create_info_assistant():
         """
         messages = state["messages"]
         if not messages:
-            return "END"
+            return {"next": "END"}
             
         last_message = messages[-1]
         
         # If this is a tool result coming back, process it in the respond node
         if state.get("tool_results") and state["tool_results"].get("pending"):
-            return "respond"
+            return {"next": "respond"}
             
         # Only process human messages for routing
         if not isinstance(last_message, HumanMessage):
-            return "respond"
+            return {"next": "respond"}
             
         content = last_message.content.lower()
         
         # Route to podcast tools if query relates to podcasts
         if any(term in content for term in ["podcast", "episode", "listen", "audio show", "similar to"]):
-            return "podcast_tools"
+            return {"next": "podcast_tools"}
         # Route to news tools if query relates to news
         elif any(term in content for term in ["news", "recent events", "happened recently", "latest on", "update me"]):
-            return "news_tools"
+            return {"next": "news_tools"}
         
         # If not specific, use a more general LLM-based classifier for borderline cases
         if any(term in content for term in ["recommend", "what happened", "information about", "tell me about"]):
@@ -77,12 +77,12 @@ def create_info_assistant():
             Classification (respond with only one word, either 'podcast', 'news', or 'general'):""")
             
             if "podcast" in classification.lower():
-                return "podcast_tools"
+                return {"next": "podcast_tools"}
             elif "news" in classification.lower():
-                return "news_tools"
+                return {"next": "news_tools"}
         
         # Default: handle it directly in the respond node
-        return "respond"
+        return {"next": "respond"}
     
     # 2.2 Podcast tools node
     def podcast_tools_node(state: InfoAssistantState) -> InfoAssistantState:
@@ -230,7 +230,7 @@ def create_info_assistant():
             }
     
     # 2.4 Response handler node
-    def respond_node(state: InfoAssistantState) -> InfoAssistantState:
+    def respond_node(state: InfoAssistantState) -> Dict[str, Any]:
         """Process all accumulated information and craft a final response."""
         messages = state["messages"]
         context = state.get("context", {})
@@ -267,7 +267,14 @@ def create_info_assistant():
                 
                 Response:"""
                 
-                response_content = llm.invoke(prompt)
+                # Generate response for podcast results
+                llm_response = llm.invoke(prompt)
+                
+                # Extract content from LLM response
+                if hasattr(llm_response, 'content'):
+                    response_content = llm_response.content
+                else:
+                    response_content = str(llm_response)
                 
             elif result_type == "news":
                 # Format news results
@@ -289,39 +296,60 @@ def create_info_assistant():
             # Clear the pending flag
             tool_results["pending"] = False
             
-            # Return updated state with the new AI message
-            return {
+            # Return updated state with the new AI message and END to break the cycle
+            new_state = {
                 **state,
                 "messages": messages + [AIMessage(content=response_content)],
                 "tool_results": tool_results
             }
+            
+            # Break the cycle by ending the flow
+            return {"next": "END", "state": new_state}
         
         # Handle direct responses (no tool was used)
         else:
-            # Use a general system prompt
+            # Use a general system prompt for answering questions
             system_prompt = """You are an intelligent, helpful assistant with expertise in both podcasts and news.
             
             You can help users find podcast recommendations or get updates on recent news events.
-            Be conversational, helpful, and concise in your responses.
+            You should also answer general knowledge questions to the best of your ability.
             
-            If the user asks about podcasts or news, let them know you can provide more specific information if they ask.
+            Be thorough, informative, and conversational in your responses.
+            Always provide a direct answer to the user's question rather than repeating it back.
+            
+            If the user asks about podcasts or news, let them know you can provide more specific information if they ask."""
+            
+            # Get the user's question
+            user_question = messages[-1].content if messages else ""
+            
+            # Simple string prompt for direct questions
+            direct_prompt = f"""
+            {system_prompt}
+            
+            User question: {user_question}
+            
+            Please provide a helpful, accurate, and direct response:
             """
             
-            # Create the prompt template
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
-                MessagesPlaceholder("messages"),
-            ])
+            # Generate a response with a direct prompt
+            llm_response = llm.invoke(direct_prompt)
             
-            # Generate a response
-            response = llm.invoke(prompt.format(messages=messages[-1:]))
-            
-            # Return updated state with the new message
-            return {
+            # Extract the content from the response - this fixes the repetition issue
+            if hasattr(llm_response, 'content'):
+                response_content = llm_response.content
+            else:
+                # Fallback in case the response structure is different
+                response_content = str(llm_response)
+                
+            # Return updated state with the new message and END to break the cycle
+            new_state = {
                 **state,
-                "messages": messages + [AIMessage(content=response.content)],
+                "messages": messages + [AIMessage(content=response_content)],
                 "current_task": "general"
             }
+            
+            # Break the cycle by ending the flow
+            return {"next": "END", "state": new_state}
     
     # 3. Set up the graph with the nodes
     
@@ -335,7 +363,7 @@ def create_info_assistant():
     workflow.set_entry_point("main_agent")
     workflow.add_conditional_edges(
         "main_agent",
-        main_agent,
+        lambda x: x["next"],  # Extract the "next" key from the dictionary returned by main_agent
         {
             "podcast_tools": "podcast_tools",
             "news_tools": "news_tools",
@@ -344,12 +372,18 @@ def create_info_assistant():
         }
     )
     
-    # 3.3 Connect tool nodes back to the main agent
+    # 3.3 Connect tool nodes back to respond
     workflow.add_edge("podcast_tools", "respond")
     workflow.add_edge("news_tools", "respond")
     
-    # 3.4 Connect respond node back to main agent for the next query
-    workflow.add_edge("respond", "main_agent")
+    # 3.4 Add conditional edges from respond node to handle state["next"]
+    workflow.add_conditional_edges(
+        "respond",
+        lambda x: x["next"],  # Extract the next key from respond output
+        {
+            "END": END
+        }
+    )
     
     # 4. Compile and return the graph
     return workflow.compile()
