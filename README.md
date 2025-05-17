@@ -2,7 +2,7 @@
 
 A versatile conversational assistant framework powered by LangGraph, designed for modular tool integration with an expandable architecture.
 
-
+![Info Assistant Workflow](info_assistant_workflow.png)
 
 ## 🎯 Overview
 
@@ -55,6 +55,30 @@ The diagram above illustrates the system's workflow architecture, showing how qu
 
 ```bash
 python main.py "What are some good podcasts about ancient history?"
+```
+
+### Interactive Mode
+
+```bash
+python main.py --interactive
+```
+
+### Debug Mode
+
+```bash
+python main.py --debug
+```
+
+The debug mode enables detailed logging to help troubleshoot issues:
+
+- Logs are written to `debug_log.txt` in the project root
+- All API calls, responses, and internal state changes are recorded
+- Great for understanding the agent's decision-making process
+- Can be combined with other modes: `python main.py --debug --interactive`
+
+Example debug command for specific queries:
+```bash
+python main.py --debug "What's happening in world news today?"
 ```
 
 ### Visualization Mode

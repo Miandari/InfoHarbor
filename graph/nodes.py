@@ -164,6 +164,54 @@ def process_news_request(state: InfoAssistantState) -> InfoAssistantState:
 
 def process_general_request(state: InfoAssistantState) -> InfoAssistantState:
     """Handle general requests that could use any tool."""
+    messages = state["messages"]
+    last_message = messages[-1]
+    
+    # For purely general queries, use direct OpenAI API instead of LangChain tools
+    if not any(term in last_message.content.lower() for term in ["podcast", "episode", "news", "update"]):
+        try:
+            # Import the OpenAI client
+            from openai import OpenAI
+            import os
+            
+            # Create client
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            
+            # Format conversation history for OpenAI
+            openai_messages = [
+                {"role": "system", "content": "You are a helpful assistant. Answer questions directly and comprehensively without repeating the question back to the user. Be informative and concise."}
+            ]
+            
+            # Add recent conversation history (limit to 5 exchanges to avoid token limits)
+            history_messages = messages[-10:]  # Last 5 exchanges (10 messages)
+            for msg in history_messages:
+                if isinstance(msg, HumanMessage):
+                    openai_messages.append({"role": "user", "content": msg.content})
+                elif isinstance(msg, AIMessage):
+                    openai_messages.append({"role": "assistant", "content": msg.content})
+            
+            # Call OpenAI API directly
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                temperature=TEMPERATURE,
+                messages=openai_messages
+            )
+            
+            # Extract response content
+            answer = response.choices[0].message.content
+            
+            # Return updated state with the new message
+            return {
+                **state,
+                "messages": messages + [AIMessage(content=answer)],
+                "current_task": "general",
+                "last_tool_used": None
+            }
+            
+        except Exception as e:
+            # Fall back to tool-based approach if direct API fails
+            print(f"Direct API call failed: {e}. Falling back to tool-based approach.")
+    
     # Create a general assistant with access to all tools
     llm = ChatOpenAI(model=DEFAULT_MODEL, temperature=TEMPERATURE)
     

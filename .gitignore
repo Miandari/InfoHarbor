@@ -48,3 +48,8 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Log files
+debug_log.txt
+logs/
+*.log
