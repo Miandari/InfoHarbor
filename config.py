@@ -38,3 +38,8 @@ PODCAST_DOMAINS = [
     "player.fm",
     "podcastaddict.com"
 ]
+
+# API Configuration
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+API_RATE_LIMIT = int(os.getenv("API_RATE_LIMIT", "100"))  # Requests per minute
+MAX_CONVERSATION_HISTORY = int(os.getenv("MAX_CONVERSATION_HISTORY", "50"))  # Messages per conversation

@@ -29,6 +29,66 @@ The application uses a flexible LangGraph workflow with a modular design:
 
 The diagram above illustrates the system's workflow architecture, showing how queries are processed through the main agent and routed to specialized tool nodes.
 
+## 🌐 API Service
+
+The Dastyar assistant can be deployed as a REST API service, allowing other applications to access its capabilities.
+
+### API Endpoints
+
+- **POST /chat** - Process a chat message and return a response
+- **POST /chat/stream** - Stream chat responses for real-time UI updates
+- **GET /conversation/:id** - Get conversation history by ID
+- **GET /tools** - List available tools
+- **POST /tools/toggle** - Enable/disable specific tools
+- **GET /health** - Health check endpoint for monitoring
+
+### Running the API
+
+```bash
+# Install additional dependencies
+pip install fastapi uvicorn websockets redis python-jose python-multipart
+
+# Start the API server
+python api.py
+```
+
+The API will be available at `http://localhost:8000`.
+
+### API Documentation
+
+Once running, API documentation is available at:
+- Swagger UI: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
+
+### Security Features
+
+The API includes:
+- API key authentication
+- Rate limiting
+- Input validation
+- Proper error handling
+
+### Performance Optimizations
+
+- Connection pooling with Redis
+- Response caching
+- Background processing for state management
+- Streaming responses for real-time updates
+
+### Deployment
+
+For production deployment on Render:
+- Follow instructions in `render_deployment_guide.md`
+- Use the provided `render.yaml` for Blueprint deployment
+- Configure environment variables for security and performance
+
+### Client Integration
+
+For details on integrating with a Node.js/React application:
+- Check `client_integration.md` for examples
+- Includes streaming response handling
+- Demonstrates connection pooling and caching techniques
+
 ## ⚙️ Installation
 
 1. Clone this repository
@@ -104,6 +164,7 @@ print(response)
 ## 📁 Project Structure
 
 - `main.py`: Entry point for the application
+- `api.py`: FastAPI implementation for REST API service
 - `graph/`: Contains the LangGraph workflow definition
   - `workflow.py`: Main workflow logic and node definitions
   - `state.py`: State management for the workflow
@@ -114,8 +175,12 @@ print(response)
   - *Add your custom tools here*
 - `utils/`: Helper utilities
   - `formatting.py`: Response formatting functions
+  - `middleware.py`: API middleware for rate limiting, caching, and connection pooling
 - `config.py`: Configuration settings
 - `visualize_graph.py`: Utility to visualize the workflow architecture
+- `client_integration.md`: Guide for client-side integration
+- `render_deployment_guide.md`: Deployment guide for Render
+- `Procfile` & `render.yaml`: Configuration files for Render deployment
 
 ## 🔧 Extending the System
 
@@ -144,13 +209,29 @@ jupyter notebook test.ipynb
 - Tavily API key for search capabilities
 - ListenNotes API key for podcast recommendations
 
+### Additional Requirements for API Service
+
+- FastAPI
+- Uvicorn
+- Redis (optional, for caching and session management)
+- Python-Jose (for API authentication)
+- Python-Multipart (for form data processing)
+
 ## 🔐 Environment Setup
 
 Create a `.env` file in the root directory with the following variables:
 ```
+# Core API Keys
 OPENAI_API_KEY=your_openai_key
 TAVILY_API_KEY=your_tavily_key
 LISTENNOTES_API_KEY=your_listennotes_key
+
+# API Service Configuration (optional)
+API_KEYS=your_api_key1,your_api_key2
+ALLOWED_ORIGINS=https://your-frontend-domain.com
+REDIS_URL=redis://localhost:6379/0
+API_RATE_LIMIT=100
+MAX_CONVERSATION_HISTORY=50
 ```
 
 Make sure to keep this file private and never commit it to your repository.
