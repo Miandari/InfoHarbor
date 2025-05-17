@@ -2,7 +2,7 @@
 
 A versatile conversational assistant framework powered by LangGraph, designed for modular tool integration with an expandable architecture.
 
-![Info Assistant Workflow](info_assistant_workflow.png)
+
 
 ## 🎯 Overview
 
