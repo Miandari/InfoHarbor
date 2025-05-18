@@ -53,3 +53,6 @@ Thumbs.db
 debug_log.txt
 logs/
 *.log
+
+# LangGraph specific
+.langgraph_api/
