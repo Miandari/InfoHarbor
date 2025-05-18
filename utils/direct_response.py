@@ -1,16 +1,14 @@
 """
-Direct response utility that bypasses LangGraph for general knowledge questions.
-This module provides a simple, direct way to get responses from OpenAI.
+Utility for direct response handling outside the LangGraph workflow
 """
-
 import os
-from typing import Dict, Any, List, Optional
-from openai import OpenAI
 import time
-import sys
+from typing import Optional
+from langchain_openai import ChatOpenAI
 
-# Global debug flag - default to False
+# Global debug flag
 DEBUG_MODE = False
+VERBOSE_MODE = False  # New flag to control print statements
 
 def set_debug_mode(enabled=True):
     """Enable or disable debug logging"""
@@ -22,7 +20,17 @@ def set_debug_mode(enabled=True):
             timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
             f.write(f"\n[{timestamp}] ========== DEBUG MODE ENABLED ==========\n")
 
-# Add a logging function for debugging
+def set_verbose_mode(enabled=True):
+    """Enable or disable verbose console output"""
+    global VERBOSE_MODE
+    VERBOSE_MODE = enabled
+
+def verbose_print(message):
+    """Print message only if verbose mode is enabled"""
+    global VERBOSE_MODE
+    if VERBOSE_MODE:
+        print(message)
+
 def debug_log(message):
     """Write debug message to a log file if debug mode is enabled"""
     global DEBUG_MODE
@@ -33,78 +41,53 @@ def debug_log(message):
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
         f.write(f"[{timestamp}] {message}\n")
 
-def get_direct_answer(question: str) -> str:
+def get_direct_answer(question: str, model_name: Optional[str] = None) -> str:
     """
     Get a direct answer to a question using the OpenAI API.
+    This is a fallback for when we need a direct response outside the LangGraph workflow.
     
     Args:
-        question: The question to answer
+        question: The user's question
+        model_name: Optional model name to use instead of default
         
     Returns:
-        The answer as a string
+        The answer from the model
     """
+    debug_log(f"Received question: {question}")
+    
+    # Check if we have an API key
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        debug_log("No API key found, returning default response")
+        return "I'm unable to process your request at this time. Please make sure the API keys are configured properly."
+    
+    debug_log("API key found, creating client")
+    
     try:
-        debug_log(f"Received question: {question}")
+        # Use provided model or default to the one in config
+        if not model_name:
+            from config import DEFAULT_MODEL
+            model_name = DEFAULT_MODEL
         
-        # Get API key from environment
-        api_key = os.getenv("OPENAI_API_KEY")
-        
-        if not api_key:
-            debug_log("ERROR: No API key found")
-            return "ERROR: OpenAI API key not found in environment variables."
-        
-        debug_log("API key found, creating client")
-        
-        # Create client
-        client = OpenAI(api_key=api_key)
-        
-        # Make a simple, direct API call
-        debug_log("Making API call with question")
-        completion = client.chat.completions.create(
-            model="gpt-4o",
-            temperature=0.5,
-            messages=[
-                {
-                    "role": "system", 
-                    "content": "You are a helpful assistant. Answer questions directly and informatively. Never repeat the question back to the user."
-                },
-                {
-                    "role": "user", 
-                    "content": question
-                }
-            ]
+        # Create a client
+        client = ChatOpenAI(
+            model=model_name,
+            temperature=0.7,
+            api_key=api_key
         )
         
-        # Get the response text
-        response = completion.choices[0].message.content
-        debug_log(f"API returned response: {response}")
+        debug_log("Making API call with question")
+        response = client.invoke(
+            [{"role": "user", "content": question}]
+        )
         
-        # Safety check: Don't return if it's just repeating the question
-        if response.lower().strip() == question.lower().strip():
-            debug_log("WARNING: Response matched question, using fallback")
-            fallback = client.chat.completions.create(
-                model="gpt-4o",
-                temperature=0.2,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "IMPORTANT: The user asked a question. Answer it directly WITHOUT repeating the question."
-                    },
-                    {
-                        "role": "user",
-                        "content": f"Question that needs a direct answer: {question}"
-                    }
-                ]
-            )
-            response = fallback.choices[0].message.content
-            debug_log(f"Fallback response: {response}")
-        
-        # Add log right before returning
-        debug_log(f"FINAL RESPONSE: {response}")
-        return response
+        debug_log(f"API returned response: {response.content}")
+        return response.content
         
     except Exception as e:
+        debug_log(f"Error in get_direct_answer: {str(e)}")
         import traceback
-        error_trace = traceback.format_exc()
-        debug_log(f"ERROR in get_direct_answer: {e}\n{error_trace}")
-        return f"I encountered a technical issue while processing your question. Error: {str(e)}"
+        debug_log(traceback.format_exc())
+        
+        # Return a generic response in case of error
+        return "I'm sorry, I encountered an error processing your request. Please try again later."

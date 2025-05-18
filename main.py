@@ -8,19 +8,19 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 import argparse
 
 # Import the workflow
-from graph.workflow import create_info_assistant
+from graph.workflow import create_info_assistant, ConfigSchema
 
 # Import the necessary types for visualization
 from graph.state import InfoAssistantState  # Import state type from your state.py file
 from langgraph.graph import StateGraph, END  # Import StateGraph and END from langgraph
 
 # Import debug utilities
-from utils.direct_response import set_debug_mode, debug_log
+from utils.direct_response import set_debug_mode, debug_log, set_verbose_mode
 
 # Load environment variables
 load_dotenv()
 
-def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = None):
+def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = None, config: Optional[Dict[str, Any]] = None):
     """
     Run the information assistant with a query.
     
@@ -28,6 +28,7 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
         query: The user's query
         state: Optional previous state to continue a conversation
         conversation_id: Optional ID for session tracking
+        config: Optional configuration to override defaults
         
     Returns:
         Tuple of (response_content, updated_state)
@@ -43,6 +44,16 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
     # Create the info assistant graph
     app = create_info_assistant()
     
+    # Set configuration for the workflow - critical for LangGraph Cloud/Studio compatibility
+    if not config:
+        from config import DEFAULT_MODEL
+        config = {
+            "configurable": {  # Wrap in configurable for Cloud compatibility
+                "model_name": DEFAULT_MODEL,
+                "system_prompt": "You are a helpful assistant specialized in providing information about podcasts and news.",
+            }
+        }
+    
     if state is None:
         debug_log("Creating new state (first turn)")
         # Start a new conversation with initial state
@@ -52,7 +63,7 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
         context = {}
         if conversation_id:
             context["conversation_id"] = conversation_id
-        
+            
         # Initial state matching InfoAssistantState structure
         initial_state = {
             "messages": messages,
@@ -64,7 +75,8 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
         }
     else:
         # Continue existing conversation
-        debug_log(f"Continuing conversation with existing state ({len(state['messages'])} messages)")
+        messages_count = len(state['messages']) if 'messages' in state else 0
+        debug_log(f"Continuing conversation with existing state. Message count before: {messages_count}")
         # Make a deep copy of state to avoid modifying the original
         initial_state = {
             "messages": list(state["messages"]) + [HumanMessage(content=query)],
@@ -76,52 +88,34 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
             "tool_results": state.get("tool_results", {})
         }
     
-    # Call the graph
+    # Call the graph with the config parameter - critical for LangGraph Cloud/Studio
     debug_log("Invoking LangGraph workflow")
-    result = app.invoke(initial_state)
+    result = app.invoke(initial_state, config=config)
     
-    # CRITICAL: Check for tool results first - this is the most reliable approach
-    tool_results = result.get("tool_results", {})
-    current_task = result.get("current_task")
-    debug_log(f"Current task after processing: {current_task}")
-    debug_log(f"Tool results present: {bool(tool_results)}")
+    debug_log(f"LangGraph workflow returned. Messages in result: {len(result.get('messages', []))}")
     
-    # DIRECT TOOL RESULT HANDLING APPROACH:
-    # Instead of trying to find messages in the state, we'll directly use
-    # the tool results and format them appropriately
+    # Track how many messages were added during processing
+    original_msg_count = len(initial_state["messages"])
+    result_msg_count = len(result.get("messages", []))
+    added_msg_count = result_msg_count - original_msg_count
+    debug_log(f"Messages added during processing: {added_msg_count}")
     
-    if current_task == "news" and tool_results and tool_results.get("type") == "news":
-        debug_log("NEWS TASK DETECTED - Using news formatting")
-        news_data = tool_results.get("data", {})
-        topic = tool_results.get("topic", "")
-        days_back = tool_results.get("days_back", 7)
-        error = tool_results.get("error")
-        
-        if error:
-            response = f"I encountered an issue while searching for news about '{topic}': {error}. Would you like to try a different search?"
-        else:
-            # Format news response
-            response = format_news_response(news_data, topic, days_back)
-        
-        debug_log(f"NEWS RESPONSE: {response[:100]}...")
-        
-    elif current_task == "podcast" and tool_results and tool_results.get("type") == "podcast":
-        debug_log("PODCAST TASK DETECTED - Using podcast formatting")
-        podcast_data = tool_results.get("data", [])
-        response = format_podcast_response({"recommendations": podcast_data})
-        debug_log(f"PODCAST RESPONSE: {response[:100]}...")
-        
+    # Check for newly added AI messages
+    ai_messages = [msg for msg in result.get("messages", [])[-added_msg_count:] 
+                  if isinstance(msg, AIMessage)]
+    
+    debug_log(f"Found {len(ai_messages)} new AI messages")
+    
+    # If we have new AI messages, use the last one as our response
+    if ai_messages:
+        debug_log(f"Using last AI message: {ai_messages[-1].content[:50]}...")
+        response = ai_messages[-1].content
     else:
-        # For all other cases, check for AI messages or use direct response
-        ai_messages = [msg for msg in result.get("messages", []) if isinstance(msg, AIMessage)]
-        
-        if ai_messages:
-            debug_log(f"Using last AI message from {len(ai_messages)} messages")
-            response = ai_messages[-1].content
-        else:
-            debug_log("No AI messages or tool results, using direct response")
-            response = get_direct_answer(query)
-            # Add this response to the result state
+        # No new AI messages found, check if tool_results are present
+        debug_log("No new AI messages found, using direct_response utility as fallback")
+        response = get_direct_answer(query)
+        # Add this response to the result state
+        if "messages" in result:
             result["messages"].append(AIMessage(content=response))
     
     debug_log(f"FINAL RESPONSE: {response[:100]}...")
@@ -132,49 +126,57 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
 
 def interactive_chat_session():
     """Run an interactive chat session with the agent."""
-    print("Welcome to the Information Assistant!")
-    print("You can chat with the assistant about podcasts, news, or ask general questions.")
-    print("Type 'exit' or 'quit' to end the conversation.\n")
+    print("\nWelcome to the Information Assistant!")
+    print("Type 'exit' or 'quit' to end the session.")
+    print("Type 'clear' to start a new conversation.\n")
     
-    # Initialize conversation state
     state = None
     
-    while True:
-        # Get user input
-        user_query = input("\nYou: ")
-        
-        # Check if user wants to exit
-        if user_query.lower() in ["exit", "quit", "bye"]:
-            print("\nAssistant: Goodbye! Have a great day!")
-            break
-        
-        try:
-            # Get response and updated state
-            response, state = run_info_assistant(user_query, state)
+    try:
+        while True:
+            user_input = input("\nYou: ").strip()
             
-            # Debug logging
-            debug_log(f"MAIN.PY - User query: {user_query}")
-            debug_log(f"MAIN.PY - Response received: {response}")
-            
-            # Print the response
-            print(f"\nAssistant: {response}")
-            
-            # Extra debug - check if response equals user query
-            if response.lower().strip() == user_query.lower().strip():
-                debug_log("WARNING: RESPONSE EQUALS USER QUERY!")
+            if user_input.lower() in ["exit", "quit"]:
+                print("\nGoodbye!")
+                break
                 
-        except Exception as e:
-            print(f"\nError: {str(e)}")
-            print("Let's start a new conversation.")
-            state = None
-
+            if user_input.lower() == "clear":
+                state = None
+                print("\nConversation cleared. Starting fresh!")
+                continue
+                
+            if not user_input:
+                print("Please enter a question or command.")
+                continue
+                
+            try:
+                debug_log("MAIN.PY - User query: " + user_input)
+                response, state = run_info_assistant(user_input, state)
+                debug_log("MAIN.PY - Response received: " + response[:100])
+                print(f"\nAssistant: {response}")
+                
+                # Quick sanity check - warn if response equals query (feedback loop)
+                if response == user_input:
+                    debug_log("WARNING: RESPONSE EQUALS USER QUERY!")
+                    
+            except Exception as e:
+                import traceback
+                print(f"\nSorry, I encountered an error: {str(e)}")
+                debug_log(f"ERROR in interactive session: {str(e)}")
+                debug_log(traceback.format_exc())
+                
+    except KeyboardInterrupt:
+        print("\n\nSession ended by user. Goodbye!")
+        
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Information Assistant")
+    parser = argparse.ArgumentParser(description="Information Assistant with podcast and news capabilities")
+    parser.add_argument("query", nargs="*", help="The query to ask the assistant")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode with detailed logging")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose mode with console debug messages")
+    parser.add_argument("--interactive", action="store_true", help="Run in interactive chat mode")
     parser.add_argument("--visualize", action="store_true", help="Generate a visualization of the workflow")
-    parser.add_argument("--interactive", action="store_true", help="Run in interactive mode")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("query", nargs="*", help="Query to ask the assistant (in non-interactive mode)")
+    
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -183,10 +185,15 @@ if __name__ == "__main__":
     # Parse command line arguments
     args = parse_args()
     
-    # Set debug mode if requested
+    # Set debug and verbose modes if requested
     if args.debug:
         set_debug_mode(True)
         print("Debug mode enabled. Logging to debug_log.txt")
+    
+    # Set verbose mode separately from debug mode
+    set_verbose_mode(args.verbose)
+    if args.verbose:
+        print("Verbose mode enabled. Debug messages will be displayed in the console.")
     
     # Check if we're in visualization mode
     if args.visualize:

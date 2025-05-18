@@ -14,7 +14,7 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 LISTENNOTES_API_KEY = os.getenv("LISTENNOTES_API_KEY")
 
 # LLM Configuration
-DEFAULT_MODEL = "gpt-4o"
+DEFAULT_MODEL = "gpt-4.1-mini"
 TEMPERATURE = 0
 
 # Tool Configuration
