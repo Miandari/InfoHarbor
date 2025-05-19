@@ -15,6 +15,7 @@ from config import DEFAULT_MODEL, TEMPERATURE, OPENAI_API_KEY
 # Import all your tools
 from tools.podcast_tools import podcast_tools
 from tools.news_tools import get_recent_news
+from tools.food_tools import food_tools
 from utils.formatting import format_response, format_podcast_response, format_news_response
 
 # Import debug utilities
@@ -87,6 +88,18 @@ def create_info_assistant():
             content = content.lower()
             verbose_print(f"MAIN_AGENT - Processing message: {content}")
             
+            # Check for food ordering intents
+            food_order_keywords = [
+                "order food", "order a pizza", "food delivery", "order pizza", "get food", 
+                "place an order", "hungry", "deliver food", "takeout", "food order",
+                "pizza", "order", "want to order", "want pizza"
+            ]
+            
+            # More flexible detection for food ordering
+            if any(term in content for term in food_order_keywords) or state.get("current_task") == "food_order" or "want" in content and "pizza" in content:
+                verbose_print("MAIN_AGENT - Detected food ordering query, routing to food_ordering_node")
+                return {"next": "food_order"}
+            
             # Expanded podcast-related keyword detection
             podcast_keywords = [
                 "podcast", "episode", "listen", "audio show", "similar to",
@@ -118,11 +131,12 @@ def create_info_assistant():
                     classification_prompt = """Classify this query into exactly one of these categories:
                     - 'podcast' (if about podcast recommendations, episodes, listening to audio content)
                     - 'news' (if about recent events, updates, current affairs)
+                    - 'food_order' (if about ordering food, delivery, takeout, restaurants)
                     - 'general' (for general knowledge questions)
                     
                     Query: """ + content + """
                     
-                    Classification (respond with only one word, either 'podcast', 'news', or 'general'):"""
+                    Classification (respond with only one word, either 'podcast', 'news', 'food_order', or 'general'):"""
                     
                     classification = llm.invoke(classification_prompt)
                     verbose_print(f"MAIN_AGENT - LLM classification result: {classification}")
@@ -133,6 +147,9 @@ def create_info_assistant():
                     elif "news" in classification.content.lower():
                         verbose_print("MAIN_AGENT - LLM classified as news query, routing to news_tools")
                         return {"next": "news_tools"}
+                    elif "food" in classification.content.lower() or "order" in classification.content.lower():
+                        verbose_print("MAIN_AGENT - LLM classified as food order query, routing to food_order")
+                        return {"next": "food_order"}
                 except Exception as e:
                     verbose_print(f"MAIN_AGENT - Error in LLM classification: {str(e)}")
             
@@ -402,7 +419,141 @@ Format your response as JSON:
                 }
             }
     
-    # 2.4 Response handler node - Fixed state management
+    # 2.4 Food ordering node
+    def food_ordering_node(state: InfoAssistantState, config: ConfigSchema) -> InfoAssistantState:
+        """Process food ordering requests and handle order flow."""
+        # Import debugging utility
+        try:
+            debug_log("FOOD_ORDER - Entering food_ordering_node")
+        except ImportError:
+            verbose_print("FOOD_ORDER - Debug logging not available")
+            
+        try:
+            messages = state["messages"]
+            last_message = messages[-1]
+            
+            # Handle different message formats
+            if isinstance(last_message, dict) and "content" in last_message:
+                content = last_message["content"]
+                # Create a HumanMessage object for the agent executor
+                last_message = HumanMessage(content=content)
+            elif isinstance(last_message, HumanMessage):
+                content = last_message.content
+            else:
+                content = str(last_message)
+                last_message = HumanMessage(content=content)
+                
+            verbose_print(f"FOOD_ORDER - Processing message: {content}")
+            
+            food_order_history = state.get("food_order_history", [])
+            context = state.get("context", {})
+            
+            # Create specialized food ordering agent
+            # Use the configured model from config if available
+            model_name = config.get("model_name", DEFAULT_MODEL)
+            llm = ChatOpenAI(model=model_name, temperature=TEMPERATURE, api_key=OPENAI_API_KEY)
+            verbose_print("FOOD_ORDER - Created LLM instance")
+            
+            # Create prompt template for the food ordering agent
+            system_message = config.get("system_prompt", """You are a food ordering assistant. Your goal is to help the user place food orders based on their preferences and queries. You have access to several specialized tools for food ordering.
+            
+Think step by step about which food ordering tool would best serve the user's request.
+Be thorough but concise in your tool usage.""")
+            
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_message),
+                MessagesPlaceholder("messages"),
+                MessagesPlaceholder("agent_scratchpad"),
+            ])
+            
+            verbose_print("FOOD_ORDER - Creating agent with food ordering tools")
+            try:
+                agent = create_tool_calling_agent(llm, food_tools, prompt)
+                agent_executor = AgentExecutor(agent=agent, tools=food_tools)
+                
+                # Execute the agent with just the last message
+                verbose_print("FOOD_ORDER - Invoking agent executor")
+                result = agent_executor.invoke({"messages": [last_message]})
+                verbose_print(f"FOOD_ORDER - Agent returned result with {len(result['messages'])} messages")
+                
+                # Extract tool results
+                tool_outputs = [msg for msg in result["messages"] if isinstance(msg, ToolMessage)]
+                verbose_print(f"FOOD_ORDER - Found {len(tool_outputs)} tool message outputs")
+                
+                tool_results = []
+                
+                # Process tool outputs
+                for tool_msg in tool_outputs:
+                    verbose_print(f"FOOD_ORDER - Processing tool message: {type(tool_msg).__name__}")
+                    if hasattr(tool_msg, "content"):
+                        content = tool_msg.content
+                        verbose_print(f"FOOD_ORDER - Tool message content type: {type(content).__name__}")
+                        if isinstance(content, str):
+                            try:
+                                content = json.loads(content)
+                                verbose_print("FOOD_ORDER - Successfully parsed content as JSON")
+                            except Exception as e:
+                                verbose_print(f"FOOD_ORDER - Failed to parse as JSON: {e}")
+                                content = {"text_result": content}
+                                
+                        tool_results.append(content)
+                        food_order_history.append(content)
+                
+                # Get the AI reasoning about the results, but don't add it to messages yet
+                ai_messages = [msg for msg in result["messages"] if isinstance(msg, AIMessage)]
+                verbose_print(f"FOOD_ORDER - Found {len(ai_messages)} AI messages")
+                
+                final_ai_message = ai_messages[-1] if ai_messages else None
+                verbose_print(f"FOOD_ORDER - Final AI message: {final_ai_message.content if final_ai_message else 'None'}")
+                
+                # Store everything needed for the main agent to craft a response
+                verbose_print(f"FOOD_ORDER - Finished processing with {len(tool_results)} results")
+                return {
+                    **state,
+                    "food_order_history": food_order_history,
+                    "current_task": "food_order",
+                    "last_tool_used": "food_order_tool",
+                    "tool_results": {
+                        "type": "food_order",
+                        "data": tool_results,
+                        "ai_reasoning": final_ai_message.content if final_ai_message else None,
+                        "pending": True
+                    }
+                }
+            except Exception as e:
+                import traceback
+                verbose_print(f"FOOD_ORDER - Error: {e}")
+                verbose_print(traceback.format_exc())
+                
+                # Return a state that indicates an error occurred
+                return {
+                    **state,
+                    "food_order_history": food_order_history,
+                    "current_task": "food_order",
+                    "last_tool_used": "food_order_tool",
+                    "tool_results": {
+                        "type": "food_order",
+                        "error": str(e),
+                        "pending": True
+                    }
+                }
+        except Exception as e:
+            verbose_print(f"FOOD_ORDER - Critical error: {str(e)}")
+            import traceback
+            verbose_print(traceback.format_exc())
+            
+            return {
+                **state,
+                "current_task": "food_order",
+                "last_tool_used": "food_order_tool",
+                "tool_results": {
+                    "type": "food_order",
+                    "error": str(e),
+                    "pending": True
+                }
+            }
+    
+    # 2.5 Response handler node - Fixed state management
     def respond_node(state: InfoAssistantState, config: ConfigSchema) -> Dict[str, Any]:
         """Process all accumulated information and craft a final response."""
         try:
@@ -440,6 +591,7 @@ Format your response as JSON:
             # Check for news data in news_history even if tool_results isn't marked correctly
             news_history = state.get("news_history", [])
             podcast_history = state.get("podcast_history", [])
+            food_order_history = state.get("food_order_history", [])
             
             response_content = ""
             
@@ -491,6 +643,14 @@ Format your response as JSON:
                         # Format a nice response using the utility function
                         from utils.formatting import format_news_response
                         response_content = format_news_response(news_data, topic, days_back)
+                
+                elif result_type == "food_order":
+                    # Use the existing response if already crafted by the food_order tool
+                    if "message" in messages[-1].content:
+                        response_content = messages[-1].content
+                    else:
+                        # Use a generic response for food orders
+                        response_content = "I've processed your food order request. Is there anything else you need help with?"
                 
                 # Clear the pending flag
                 tool_results["pending"] = False
@@ -544,6 +704,8 @@ Format your response as JSON:
                 "messages": new_messages,
                 "podcast_history": state.get("podcast_history", []),
                 "news_history": state.get("news_history", []),
+                "food_order_history": state.get("food_order_history", []),
+                "food_order_state": state.get("food_order_state", None),
                 "current_task": current_task,  # Keep the original task
                 "last_tool_used": state.get("last_tool_used"),
                 "context": state.get("context", {}),
@@ -569,6 +731,7 @@ Format your response as JSON:
                 "messages": list(state.get("messages", [])) + [emergency_message],
                 "podcast_history": state.get("podcast_history", []),
                 "news_history": state.get("news_history", []),
+                "food_order_history": state.get("food_order_history", []),
                 "current_task": state.get("current_task", "general"),
                 "last_tool_used": state.get("last_tool_used", ""),
                 "context": state.get("context", {}),
@@ -583,24 +746,31 @@ Format your response as JSON:
     workflow.add_node("main_agent", main_agent)
     workflow.add_node("podcast_tools", podcast_tools_node)
     workflow.add_node("news_tools", news_tools_node)
+    workflow.add_node("food_order", food_ordering_node)
     workflow.add_node("respond", respond_node)
     
     # 3.2 Define edges - conditional routing from main router to tool nodes
     workflow.set_entry_point("main_agent")
+    
+    # Define routing conditions map explicitly to ensure food_order is properly registered
+    routing_conditions = {
+        "podcast_tools": "podcast_tools",
+        "news_tools": "news_tools",
+        "food_order": "food_order",  # Make sure this is explicitly defined
+        "respond": "respond",
+        "END": END
+    }
+    
     workflow.add_conditional_edges(
         "main_agent",
         lambda x: x.get("next", "respond"),  # Extract the "next" key with a fallback to respond
-        {
-            "podcast_tools": "podcast_tools",
-            "news_tools": "news_tools",
-            "respond": "respond",
-            "END": END
-        }
+        routing_conditions
     )
     
     # 3.3 Connect tool nodes back to respond
     workflow.add_edge("podcast_tools", "respond")
     workflow.add_edge("news_tools", "respond")
+    workflow.add_edge("food_order", "respond")
     
     # 4. Compile and return the graph
     return workflow.compile()
