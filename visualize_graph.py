@@ -34,6 +34,7 @@ def visualize_workflow(output_file="info_assistant_workflow"):
     dot.node("main_agent", "Main Agent\n(Conversation Controller)", shape='box', style='filled', fillcolor='lightblue')
     dot.node("podcast_tools", "Podcast Tools\n(Specialized Agent)", shape='box', style='filled', fillcolor='lightpink')
     dot.node("news_tools", "News Tools\n(Specialized Agent)", shape='box', style='filled', fillcolor='lightyellow')
+    dot.node("food_order", "Food Order Tools\n(Order Processing)", shape='box', style='filled', fillcolor='lightcoral')
     dot.node("respond", "Response Handler\n(Formats Responses)", shape='box', style='filled', fillcolor='lightgreen')
     dot.node("END", shape='doublecircle', style='filled', fillcolor='lightgray')
     
@@ -41,12 +42,14 @@ def visualize_workflow(output_file="info_assistant_workflow"):
     dot.edge("_start_", "main_agent", penwidth='1.5')
     dot.edge("main_agent", "podcast_tools", label="podcast intent", penwidth='1.5')
     dot.edge("main_agent", "news_tools", label="news intent", penwidth='1.5')
+    dot.edge("main_agent", "food_order", label="food order intent", penwidth='1.5')
     dot.edge("main_agent", "respond", label="direct response", penwidth='1.5')
     dot.edge("main_agent", "END", label="end", penwidth='0.8', style="dashed")
     
     # Tools report back to respond handler
     dot.edge("podcast_tools", "respond", penwidth='1.5')
     dot.edge("news_tools", "respond", penwidth='1.5')
+    dot.edge("food_order", "respond", penwidth='1.5')
     
     # Respond handler goes back to main agent for next turn
     dot.edge("respond", "main_agent", label="next turn", penwidth='1.5')

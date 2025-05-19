@@ -55,6 +55,24 @@ def get_direct_answer(question: str, model_name: Optional[str] = None) -> str:
     """
     debug_log(f"Received question: {question}")
     
+    # Check if this is a food ordering request
+    question_lower = question.lower()
+    food_order_keywords = ["order food", "order a pizza", "food delivery", "order pizza", "get food", 
+                          "place an order", "hungry", "deliver food", "takeout", "food order",
+                          "pizza", "want to order", "want pizza"]
+                          
+    is_food_order = any(keyword in question_lower for keyword in food_order_keywords) or \
+                    ("want" in question_lower and "pizza" in question_lower)
+                    
+    if is_food_order:
+        debug_log("Food ordering intent detected in direct_response, returning structured prompt")
+        return "I'd be happy to help you order food! Please provide your complete order details including:\n\n" + \
+               "1. Restaurant name\n" + \
+               "2. Items you'd like to order (including quantities)\n" + \
+               "3. Delivery or pickup preference\n" + \
+               "4. Delivery address (if applicable)\n" + \
+               "5. Any special instructions"
+    
     # Check if we have an API key
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:

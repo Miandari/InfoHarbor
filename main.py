@@ -41,6 +41,43 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
     debug_log("\n==== RUN_INFO_ASSISTANT CALLED ====")
     debug_log(f"Query: {query}")
     
+    # Check if this is a food ordering continuation
+    if state and state.get("current_task") == "food_order" and state.get("food_order_state") == "collecting_details":
+        debug_log("Food order continuation detected, using food ordering tool")
+        from tools.food_tools import process_food_order
+        
+        try:
+            # Process the food order using invoke() instead of direct calling
+            result = process_food_order.invoke({"order_text": query})
+            
+            # Format a nice response with order confirmation
+            response = "Thank you! I've sent your food order via Telegram. Here's what I sent:\n\n" + \
+                      f"{query}\n\n" + \
+                      "Your order has been submitted. Is there anything else you need help with?"
+            
+            # Update the state
+            food_order_history = state.get("food_order_history", [])
+            food_order_history.append({"order_text": query})
+            
+            updated_state = {
+                **state,
+                "messages": state["messages"] + [AIMessage(content=response)],
+                "current_task": "food_order",
+                "last_tool_used": "food_order_tool",
+                "food_order_state": "completed",
+                "food_order_history": food_order_history,
+                "tool_results": {
+                    "type": "food_order",
+                    "data": result,
+                    "pending": False
+                }
+            }
+            
+            debug_log("Food order processed directly")
+            return response, updated_state
+        except Exception as e:
+            debug_log(f"Error processing food order: {str(e)}")
+    
     # Create the info assistant graph
     app = create_info_assistant()
     
@@ -69,19 +106,104 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
             "messages": messages,
             "podcast_history": [],
             "news_history": [],
+            "food_order_history": [],
+            "food_order_state": None,
             "current_task": None,
             "last_tool_used": None,
             "context": context,
+            "tool_results": {}
         }
+        
+        # Check if this is a food ordering intent
+        query_lower = query.lower()
+        food_order_keywords = ["order food", "order a pizza", "food delivery", "order pizza", "get food", 
+                          "place an order", "hungry", "deliver food", "takeout", "food order",
+                          "pizza", "want to order", "want pizza"]
+                          
+        is_food_order = any(keyword in query_lower for keyword in food_order_keywords) or \
+                      ("want" in query_lower and "pizza" in query_lower)
+                      
+        if is_food_order:
+            debug_log("Food ordering intent detected in first message")
+            response = "I'd be happy to help you order food! Please provide your complete order details including:\n\n" + \
+                  "1. Restaurant name\n" + \
+                  "2. Items you'd like to order (including quantities)\n" + \
+                  "3. Delivery or pickup preference\n" + \
+                  "4. Delivery address (if applicable)\n" + \
+                  "5. Any special instructions"
+                  
+            updated_state = {
+                **initial_state,
+                "messages": messages + [AIMessage(content=response)],
+                "current_task": "food_order", 
+                "food_order_state": "collecting_details"
+            }
+            
+            debug_log("Food ordering prompt sent directly")
+            return response, updated_state
+            
     else:
         # Continue existing conversation
         messages_count = len(state['messages']) if 'messages' in state else 0
         debug_log(f"Continuing conversation with existing state. Message count before: {messages_count}")
+        
+        # Check if the previous exchange was about food ordering (prompt sent, now getting details)
+        if state.get("current_task") == "food_order" and state.get("food_order_state") == "collecting_details":
+            debug_log("Processing food order details")
+            from tools.food_tools import process_food_order
+            
+            try:
+                # Process the food order using invoke() instead of direct calling
+                result = process_food_order.invoke({"order_text": query})
+                
+                # Format a nice response with order confirmation
+                response = "Thank you! I've sent your food order via Telegram. Here's what I sent:\n\n" + \
+                          f"{query}\n\n" + \
+                          "Your order has been submitted. Is there anything else you need help with?"
+                
+                # Update the state
+                food_order_history = state.get("food_order_history", [])
+                food_order_history.append({"order_text": query})
+                
+                updated_state = {
+                    **state,
+                    "messages": state["messages"] + [HumanMessage(content=query), AIMessage(content=response)],
+                    "current_task": "food_order",
+                    "last_tool_used": "food_order_tool",
+                    "food_order_state": "completed",
+                    "food_order_history": food_order_history,
+                    "tool_results": {
+                        "type": "food_order",
+                        "data": result,
+                        "pending": False
+                    }
+                }
+                
+                debug_log("Food order processed successfully")
+                return response, updated_state
+                
+            except Exception as e:
+                debug_log(f"Error processing food order: {str(e)}")
+                import traceback
+                debug_log(traceback.format_exc())
+                
+                # Error handling
+                response = f"I encountered an issue while processing your food order: {str(e)}. Would you like to try again?"
+                updated_state = {
+                    **state,
+                    "messages": state["messages"] + [HumanMessage(content=query), AIMessage(content=response)],
+                    "current_task": "food_order",
+                    "food_order_state": "error"
+                }
+                return response, updated_state
+        
         # Make a deep copy of state to avoid modifying the original
         initial_state = {
             "messages": list(state["messages"]) + [HumanMessage(content=query)],
             "podcast_history": state.get("podcast_history", []),
             "news_history": state.get("news_history", []),
+            "food_order_history": state.get("food_order_history", []),
+            "food_order_state": state.get("food_order_state", None),
             "current_task": state.get("current_task"),
             "last_tool_used": state.get("last_tool_used"),
             "context": state.get("context", {}),
@@ -117,6 +239,13 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
         # Add this response to the result state
         if "messages" in result:
             result["messages"].append(AIMessage(content=response))
+            
+        # Check if this is a food ordering intent detected by direct_response
+        if "order food" in response.lower() or "restaurant name" in response.lower():
+            debug_log("Food ordering prompt detected in direct_response output")
+            # Update the state to include food ordering state
+            result["current_task"] = "food_order"
+            result["food_order_state"] = "collecting_details"
     
     debug_log(f"FINAL RESPONSE: {response[:100]}...")
     debug_log("==== RUN_INFO_ASSISTANT COMPLETE ====\n")
