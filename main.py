@@ -75,30 +75,36 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
     # Initialize memory manager with debug flag
     memory_manager = get_memory_manager(debug=debug)
     
-    # Check if this is a food ordering continuation
-    if state and state.get("current_task") == "food_order" and state.get("food_order_state") == "collecting_details":
-        debug_log("Food order continuation detected, using food ordering tool")
-        from tools.food_tools import process_food_order
-        
-        try:
-            # Process the food order using invoke() instead of direct calling
-            result = process_food_order.invoke({"order_text": query})
+    # Check if state is a dictionary before accessing its attributes
+    if state and isinstance(state, dict):
+        # Check if this is a food ordering continuation
+        if state.get("current_task") == "food_order" and state.get("food_order_state") == "collecting_details":
+            debug_log("Food order continuation detected, using food ordering tool")
+            from tools.food_tools import process_food_order
             
-            # Use the centralized state transition function for food order completion
-            updated_state = StateTransitions.handle_food_order_completion(state, query, result)
-            
-            # Set or update user ID for memory
-            updated_state = StateTransitions.identify_user(updated_state, user_id)
-            
-            # Extract the response from the updated state
-            ai_messages = [msg for msg in updated_state["messages"] if isinstance(msg, AIMessage)]
-            response = ai_messages[-1].content if ai_messages else "Your food order has been processed."
-            
-            debug_log("Food order processed directly")
-            return response, updated_state
-            
-        except Exception as e:
-            debug_log(f"Error processing food order: {str(e)}")
+            try:
+                # Process the food order using invoke() instead of direct calling
+                result = process_food_order.invoke({"order_text": query})
+                
+                # Use the centralized state transition function for food order completion
+                updated_state = StateTransitions.handle_food_order_completion(state, query, result)
+                
+                # Set or update user ID for memory
+                updated_state = StateTransitions.identify_user(updated_state, user_id)
+                
+                # Extract the response from the updated state
+                ai_messages = [msg for msg in updated_state["messages"] if isinstance(msg, AIMessage)]
+                response = ai_messages[-1].content if ai_messages else "Your food order has been processed."
+                
+                debug_log("Food order processed directly")
+                return response, updated_state
+                
+            except Exception as e:
+                debug_log(f"Error processing food order: {str(e)}")
+    elif state and not isinstance(state, dict):
+        # Handle case where state is not a dictionary
+        debug_log(f"WARNING: State is type {type(state)}, expected dict. Creating clean state.")
+        state = None
     
     # Create the info assistant graph
     app = create_info_assistant()
@@ -152,8 +158,16 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
             return response, initial_state
     else:
         # Continue existing conversation
-        messages_count = len(state['messages']) if 'messages' in state else 0
+        if isinstance(state, dict) and 'messages' in state:
+            messages_count = len(state['messages'])
+        else:
+            messages_count = 0
         debug_log(f"Continuing conversation with existing state. Message count before: {messages_count}")
+        
+        # Ensure state is a dictionary
+        if not isinstance(state, dict):
+            debug_log(f"Converting state of type {type(state)} to dictionary")
+            state = StateTransitions.create_clean_state()
         
         # Ensure the state has a user ID
         if not state.get("user_id"):
@@ -195,10 +209,10 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
                     "food_order_state": "error"
                 }
                 return response, updated_state
-        
+                
         # Make a deep copy of state to avoid modifying the original
         initial_state = {
-            "messages": list(state["messages"]) + [HumanMessage(content=query)],
+            "messages": list(state.get("messages", [])) + [HumanMessage(content=query)],
             "podcast_history": state.get("podcast_history", []),
             "news_history": state.get("news_history", []),
             "food_order_history": state.get("food_order_history", []),

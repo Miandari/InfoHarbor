@@ -16,6 +16,7 @@ from fastapi import Request, Response, HTTPException, status
 from starlette.middleware.base import BaseHTTPMiddleware
 import redis.asyncio as redis
 import logging
+from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
 
 from config import API_RATE_LIMIT
 
@@ -25,53 +26,133 @@ logger = logging.getLogger("dastyar-middleware")
 
 def add_metadata(state: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Add metadata to the state like timestamps and version information.
-    
-    This middleware runs after each node to track state changes and maintain
-    versioning across the workflow.
+    Add metadata to messages for tracking purposes.
     
     Args:
-        state: The current state dictionary
+        state: Current state
         
     Returns:
-        Updated state with metadata added
+        State with added metadata
     """
-    # Add timestamp if not present
-    if "metadata" not in state:
-        state["metadata"] = {}
+    if "messages" not in state:
+        return state
+        
+    updated_messages = []
     
-    # Update the timestamp
-    state["metadata"]["last_updated"] = datetime.now().isoformat()
+    for msg in state["messages"]:
+        # Skip messages that already have metadata
+        if hasattr(msg, "additional_kwargs") and msg.additional_kwargs.get("metadata"):
+            updated_messages.append(msg)
+            continue
+            
+        # Add metadata based on message type
+        if isinstance(msg, HumanMessage):
+            if not hasattr(msg, "additional_kwargs") or not msg.additional_kwargs.get("metadata"):
+                # Create a copy with metadata
+                updated_msg = HumanMessage(
+                    content=msg.content,
+                    additional_kwargs={
+                        **(msg.additional_kwargs if hasattr(msg, "additional_kwargs") else {}),
+                        "metadata": {"source": "user", "message_id": compute_message_hash(msg)}
+                    }
+                )
+                updated_messages.append(updated_msg)
+            else:
+                updated_messages.append(msg)
+        elif isinstance(msg, AIMessage):
+            if not hasattr(msg, "additional_kwargs") or not msg.additional_kwargs.get("metadata"):
+                # Create a copy with metadata
+                updated_msg = AIMessage(
+                    content=msg.content,
+                    additional_kwargs={
+                        **(msg.additional_kwargs if hasattr(msg, "additional_kwargs") else {}),
+                        "metadata": {"source": "assistant", "message_id": compute_message_hash(msg)}
+                    }
+                )
+                updated_messages.append(updated_msg)
+            else:
+                updated_messages.append(msg)
+        else:
+            # For other message types, pass through unchanged
+            updated_messages.append(msg)
+            
+    return {**state, "messages": updated_messages}
+
+def compute_message_hash(message: BaseMessage) -> str:
+    """Compute a unique hash for a message based on its content."""
+    content = getattr(message, "content", str(message))
+    msg_type = message.__class__.__name__
+    hash_input = f"{msg_type}:{content}"
+    return hashlib.md5(hash_input.encode()).hexdigest()[:8]
+
+def track_message_fingerprints(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Add fingerprints to messages for deduplication.
+    This creates a stateful registry of messages to prevent duplication.
     
-    # Track version
-    if "state_version" not in state:
-        state["state_version"] = 1
-    else:
-        state["state_version"] += 1
+    Args:
+        state: Current state
+        
+    Returns:
+        State with message fingerprints
+    """
+    if "messages" not in state:
+        return {**state, "message_fingerprints": {}}
     
-    return state
+    # Initialize or retrieve fingerprint registry
+    fingerprints = state.get("message_fingerprints", {})
+    unique_messages = []
+    
+    for msg in state["messages"]:
+        # Extract content and create a fingerprint
+        if isinstance(msg, dict):
+            content = msg.get("content", "")
+            msg_type = msg.get("type", "unknown")
+        else:
+            content = getattr(msg, "content", str(msg))
+            msg_type = msg.__class__.__name__
+        
+        # Skip empty messages
+        if not content.strip():
+            continue
+            
+        # Create a fingerprint for this message
+        msg_hash = compute_message_hash(msg) if isinstance(msg, BaseMessage) else hashlib.md5(f"{msg_type}:{content}".encode()).hexdigest()[:8]
+        
+        # Only include unique messages
+        if msg_hash not in fingerprints:
+            fingerprints[msg_hash] = True
+            unique_messages.append(msg)
+    
+    # Update state with unique messages and fingerprint registry
+    return {
+        **state,
+        "messages": unique_messages,
+        "message_fingerprints": fingerprints
+    }
 
 def limit_conversation_history(state: Dict[str, Any], max_messages: int = 20) -> Dict[str, Any]:
     """
-    Limit the conversation history to prevent the state from growing too large.
+    Limit conversation history to prevent state from growing too large.
     
     Args:
-        state: The current state dictionary
+        state: Current state
         max_messages: Maximum number of messages to keep
         
     Returns:
-        Updated state with limited conversation history
+        State with limited conversation history
     """
-    if "messages" in state and len(state["messages"]) > max_messages:
-        # Keep the most recent messages
-        state["messages"] = state["messages"][-max_messages:]
+    if "messages" not in state or len(state["messages"]) <= max_messages:
+        return state
         
-        # Update metadata to indicate truncation
-        if "metadata" not in state:
-            state["metadata"] = {}
-        state["metadata"]["history_truncated"] = True
-        
-    return state
+    # Apply fingerprinting before truncating
+    state_with_fingerprints = track_message_fingerprints(state)
+    
+    # Keep the latest messages, prioritizing the most recent
+    messages = state_with_fingerprints["messages"]
+    truncated_messages = messages[-max_messages:]
+    
+    return {**state_with_fingerprints, "messages": truncated_messages}
 
 # === API Middleware Classes ===
 

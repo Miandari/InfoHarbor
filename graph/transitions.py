@@ -395,3 +395,117 @@ class StateTransitions:
         tool_base_name = tool_name.replace("_tools", "")
         
         return tool_base_name not in pending_tools
+    
+    @staticmethod
+    def add_to_pending_tools(state: InfoAssistantState, tool_name: str) -> InfoAssistantState:
+        """
+        Add a tool to the pending_tools list to track in-progress tool executions.
+        
+        Args:
+            state: Current state
+            tool_name: The name of the tool to add to pending tools
+            
+        Returns:
+            Updated state with tool added to pending_tools
+        """
+        # Initialize pending_tools if it doesn't exist
+        pending_tools = state.get("pending_tools", [])
+        
+        # Standardize tool name (remove "_tools" suffix if present)
+        tool_base_name = tool_name.replace("_tools", "").replace("_tool", "")
+        
+        # Only add if not already in the list
+        if tool_base_name not in pending_tools:
+            pending_tools.append(tool_base_name)
+            
+            # Log for debugging if possible
+            try:
+                from utils.direct_response import debug_log
+                debug_log(f"STATE_TRANSITION - Added {tool_base_name} to pending_tools: {pending_tools}")
+            except ImportError:
+                pass
+        
+        # Update tool_results to indicate pending status
+        tool_results = state.get("tool_results", {})
+        tool_results = {
+            **tool_results,
+            "type": tool_base_name,
+            "pending": True
+        }
+        
+        return {
+            **state,
+            "pending_tools": pending_tools,
+            "tool_results": tool_results
+        }
+    
+    @staticmethod
+    def remove_from_pending_tools(state: InfoAssistantState, tool_name: str) -> InfoAssistantState:
+        """
+        Remove a tool from the pending_tools list once execution is complete.
+        
+        Args:
+            state: Current state
+            tool_name: The name of the tool to remove from pending tools
+            
+        Returns:
+            Updated state with tool removed from pending_tools
+        """
+        # Get current pending_tools or empty list
+        pending_tools = state.get("pending_tools", [])
+        
+        # Standardize tool name (remove "_tools" suffix if present)
+        tool_base_name = tool_name.replace("_tools", "").replace("_tool", "")
+        
+        # Remove the tool if present
+        if tool_base_name in pending_tools:
+            pending_tools = [t for t in pending_tools if t != tool_base_name]
+            
+            # Log for debugging if possible
+            try:
+                from utils.direct_response import debug_log
+                debug_log(f"STATE_TRANSITION - Removed {tool_base_name} from pending_tools: {pending_tools}")
+            except ImportError:
+                pass
+        
+        # Update tool_results to indicate non-pending status
+        tool_results = state.get("tool_results", {})
+        if tool_results.get("type") == tool_base_name:
+            tool_results["pending"] = False
+        
+        return {
+            **state,
+            "pending_tools": pending_tools,
+            "tool_results": tool_results
+        }
+    
+    @staticmethod
+    def clear_pending_tools(state: InfoAssistantState) -> InfoAssistantState:
+        """
+        Clear all pending tools, typically used after error handling or workflow completion.
+        
+        Args:
+            state: Current state
+            
+        Returns:
+            Updated state with empty pending_tools list
+        """
+        # Get current tool_results
+        tool_results = state.get("tool_results", {})
+        
+        # Set pending to false in tool_results
+        if "pending" in tool_results:
+            tool_results["pending"] = False
+            
+        # Log for debugging if possible
+        try:
+            from utils.direct_response import debug_log
+            debug_log(f"STATE_TRANSITION - Cleared all pending tools")
+        except ImportError:
+            pass
+        
+        return {
+            **state,
+            "pending_tools": [],
+            "tool_results": tool_results
+        }

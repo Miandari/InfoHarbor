@@ -5,6 +5,7 @@ langchain-openai>=0.0.6
 pydantic>=2.0.0
 python-dotenv>=1.0.0
 langmem>=0.0.1
+numpy>=1.24.0  # Required for optimized vector operations in InMemoryStore
 
 # API clients
 tavily-python>=0.2.3

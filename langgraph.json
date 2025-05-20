@@ -10,7 +10,7 @@
     "graphviz"
   ],
   "graphs": {
-    "info_assistant": "./graph/workflow.py:create_info_assistant"
+    "info_assistant": "./graph/workflow.py:create_info_assistant_for_studio"
   },
   "env": "./.env"
 }

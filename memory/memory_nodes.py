@@ -30,37 +30,49 @@ def get_memory_manager() -> MemoryManager:
 
 def memory_retrieval_node(state: InfoAssistantState) -> InfoAssistantState:
     """
-    Retrieve relevant user memories and add them to the conversation state.
-    
-    This node runs at the start of a conversation to provide memory context.
+    Retrieve memory items relevant to the conversation.
+    This node runs at the start of the conversation to get user context.
     
     Args:
-        state: Current conversation state
+        state: The current state
         
     Returns:
-        State enriched with user memory context
+        Updated state with memory information
     """
+    # Defensive check for state type - handle the 'bool has no attribute get' error
+    if not isinstance(state, dict):
+        print(f"ERROR: Memory retrieval received non-dict state of type {type(state)}")
+        # Create a proper initial state
+        from graph.transitions import StateTransitions
+        return StateTransitions.create_clean_state()
+        
+    memory_manager = get_memory_manager()
+    
     try:
-        # Get user ID from state or generate a placeholder for testing
-        user_id = state.get("user_id", "default_user")
+        # Get user ID from state
+        user_id = state.get("user_id", "")
         
-        # Get the memory manager
-        memory_manager = get_memory_manager()
-        
-        # Use memory manager's debug_print instead of direct prints
-        memory_manager.debug_print(f"Memory retrieval for user_id: {user_id}")
-        
-        # Get conversation context from messages
+        # Get messages if they exist
         messages = state.get("messages", [])
-        memory_manager.debug_print(f"Using {len(messages)} messages for memory context")
         
-        # Retrieve memories relevant to the conversation
-        try:
-            memories = memory_manager.retrieve_memories(
-                user_id=user_id,
-                conversation_context=messages[-5:] if len(messages) > 5 else messages,
-                limit=10
-            )
+        # Only retrieve memories if we have a user ID
+        if user_id:
+            memory_manager.debug_print(f"Retrieving memories for user: {user_id}")
+            
+            # If no messages, do a basic retrieval
+            if not messages:
+                memories = {
+                    "identity": {"user_id": user_id, "name": ""},
+                    "preferences": {"likes": [], "dislikes": []},
+                    "important_facts": [],
+                    "conversation_history": [],
+                }
+            else:
+                memories = memory_manager.retrieve_memories(
+                    user_id=user_id,
+                    conversation_context=messages[-5:] if len(messages) > 5 else messages,
+                    limit=10
+                )
             
             memory_manager.debug_print(f"Retrieved memories type: {type(memories)}")
             memory_manager.debug_print(f"Retrieved memories content preview: {str(memories)[:100]}")
@@ -76,19 +88,15 @@ def memory_retrieval_node(state: InfoAssistantState) -> InfoAssistantState:
                     memory_manager.debug_print(f"No identity information in memories")
             else:
                 memory_manager.debug_print(f"Unexpected memories format - not a dict: {type(memories)}")
-                
-        except Exception as retrieval_error:
-            import traceback
-            memory_manager.debug_print(f"Memory retrieval specific error: {retrieval_error}")
-            memory_manager.debug_print(f"Memory retrieval error traceback: {traceback.format_exc()}")
-            # Create empty memory structure as fallback
+        else:
+            # No user ID, create empty memory structure
             memories = {
                 "identity": {},
                 "preferences": {"likes": [], "dislikes": []},
                 "important_facts": [],
                 "conversation_history": [],
             }
-        
+                
         # Format memories as context string
         try:
             memory_context = memory_manager.format_memory_for_context(memories)
@@ -140,24 +148,54 @@ def memory_extraction_node(state: InfoAssistantState) -> InfoAssistantState:
         if len(messages) < 2:  # Need at least user + assistant message
             return state
         
-        # Extract memory items from recent conversation
+        # Ensure messages are properly formatted before passing to extraction
+        normalized_messages = []
+        for msg in messages:
+            # Handle the case where the message might be a dict instead of a Message object
+            if isinstance(msg, dict):
+                # Convert dict to appropriate message type
+                if msg.get("type") == "human":
+                    normalized_messages.append(HumanMessage(content=msg.get("content", "")))
+                elif msg.get("type") == "ai":
+                    normalized_messages.append(AIMessage(content=msg.get("content", "")))
+                else:
+                    # Skip messages we can't properly normalize
+                    continue
+            else:
+                # It's already a Message object
+                normalized_messages.append(msg)
+        
         # Use last 10 messages maximum to avoid token limits
-        recent_messages = messages[-10:] if len(messages) > 10 else messages
-        extraction_result = memory_manager.extract_memory_items(
-            user_id=user_id,
-            messages=recent_messages
-        )
+        recent_messages = normalized_messages[-10:] if len(normalized_messages) > 10 else normalized_messages
         
-        # Get extracted items
-        extracted_items = extraction_result.get("extracted_items", [])
-        
-        # Update state with memory extraction results
-        return {
-            **state,
-            "memory_updates": state.get("memory_updates", []) + extracted_items
-        }
+        # Only proceed if we have valid messages
+        if not recent_messages:
+            return state
+            
+        try:
+            extraction_result = memory_manager.extract_memory_items(
+                user_id=user_id,
+                messages=recent_messages
+            )
+            
+            # Get extracted items
+            extracted_items = extraction_result.get("extracted_items", [])
+            
+            # Update state with memory extraction results
+            return {
+                **state,
+                "memory_updates": state.get("memory_updates", []) + extracted_items
+            }
+        except Exception as extraction_error:
+            print(f"Error in memory extraction process: {extraction_error}")
+            import traceback
+            print(traceback.format_exc())
+            return state
+            
     except Exception as e:
-        print(f"Error in memory extraction: {e}")
+        print(f"Error in memory extraction: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
         # Return unmodified state on error
         return state
 
@@ -193,10 +231,32 @@ def memory_update_node(state: InfoAssistantState) -> InfoAssistantState:
         # Store conversation summary
         messages = state.get("messages", [])
         if len(messages) >= 2:  # Need at least user + assistant message
-            memory_manager.store_conversation_summary(
-                user_id=user_id,
-                messages=messages
-            )
+            # Normalize messages to ensure they're all proper Message objects
+            normalized_messages = []
+            for msg in messages:
+                # Handle the case where the message might be a dict instead of a Message object
+                if isinstance(msg, dict):
+                    # Convert dict to appropriate message type
+                    if msg.get("type") == "human":
+                        normalized_messages.append(HumanMessage(content=msg.get("content", "")))
+                    elif msg.get("type") == "ai":
+                        normalized_messages.append(AIMessage(content=msg.get("content", "")))
+                    else:
+                        # Skip messages we can't properly normalize
+                        continue
+                else:
+                    # It's already a Message object
+                    normalized_messages.append(msg)
+            
+            # Only store summary if we have normalized messages
+            if normalized_messages:
+                try:
+                    memory_manager.store_conversation_summary(
+                        user_id=user_id,
+                        messages=normalized_messages
+                    )
+                except Exception as summary_error:
+                    print(f"Error storing conversation summary: {summary_error}")
         
         # Clear memory updates from state after persisting
         return {
@@ -205,6 +265,8 @@ def memory_update_node(state: InfoAssistantState) -> InfoAssistantState:
         }
     except Exception as e:
         print(f"Error in memory update: {e}")
+        import traceback
+        print(traceback.format_exc())
         # Return unmodified state on error
         return {**state, "memory_updates": []}
 

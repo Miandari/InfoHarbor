@@ -883,17 +883,20 @@ def route_query(state: InfoAssistantState) -> Dict[str, Any]:
         debug_log(f"ROUTE_QUERY - Intent detected: {intent} for query: {query}")
         
         # CRITICAL FIX: Explicitly set the current_task in the state based on detected intent
+        # Initialize current_task if it doesn't exist
+        current_task = state.get("current_task")
+        
         if intent == "news":
-            state["current_task"] = "news"
+            current_task = "news"
             debug_log("ROUTE_QUERY - Explicitly setting current_task to 'news'")
         elif intent == "podcast":
-            state["current_task"] = "podcast" 
+            current_task = "podcast" 
             debug_log("ROUTE_QUERY - Explicitly setting current_task to 'podcast'")
         elif intent == "food_order":
-            state["current_task"] = "food_order"
+            current_task = "food_order"
             debug_log("ROUTE_QUERY - Explicitly setting current_task to 'food_order'")
         else:
-            state["current_task"] = "general"
+            current_task = "general"
             debug_log("ROUTE_QUERY - Explicitly setting current_task to 'general'")
             
         # Map from intent to routing destination
@@ -908,9 +911,14 @@ def route_query(state: InfoAssistantState) -> Dict[str, Any]:
         next_node = intent_routing.get(intent, "prepare_context")
         
         debug_log(f"ROUTE_QUERY - Detected {intent} intent, routing to {next_node}")
-        debug_log(f"ROUTE_QUERY - Current state: current_task={state.get('current_task')}")
-            
-        return {"next": next_node}
+        debug_log(f"ROUTE_QUERY - Current state: current_task={current_task}")
+        
+        # Only update the state with the current_task - do not add the message again
+        # This is crucial to prevent message duplication
+        return {
+            "next": next_node,
+            "current_task": current_task
+        }
     
     except Exception as e:
         import traceback
