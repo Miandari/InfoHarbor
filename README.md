@@ -1,6 +1,6 @@
 # LangGraph Memory-Enhanced Information Assistant
 
-A conversational AI assistant built with LangGraph that uses persistent memory to remember user information across conversations.
+A conversational AI assistant built with LangGraph that uses persistent memory to remember user information across conversations. The assistant can handle multiple types of tasks including food ordering, podcast recommendations, and news searches.
 
 ## Features
 
@@ -9,8 +9,12 @@ A conversational AI assistant built with LangGraph that uses persistent memory t
 - **LangGraph Workflow**: Uses a directed graph architecture for task routing and processing
 - **ReAct Pattern**: Implements reasoning + action pattern for complex tasks
 - **Persistent Storage**: Uses langmem for efficient vector storage of memory items
+- **Task Routing**: Intelligently routes user requests to specialized processing nodes
+- **API Integration**: Connects with Telegram for food ordering, ListenNotes for podcasts, and news APIs
 
-## Memory System Architecture
+## System Architecture
+
+### Memory System Architecture
 
 The memory system integrates with the LangGraph workflow to provide personalized responses based on user history:
 
@@ -33,12 +37,29 @@ The memory system integrates with the LangGraph workflow to provide personalized
                                                 └────────────────┘
 ```
 
+### Graph Workflow Architecture
+
+The system uses the LangGraph library to create a directed workflow that processes user queries:
+
+1. **Entry Point**: All interactions start with memory retrieval
+2. **Task Routing**: Queries are routed to specialized nodes based on intent
+3. **Task Processing**: Specialized nodes handle different task types
+4. **Memory Extraction**: New information is extracted from the conversation
+5. **Memory Update**: User memory is updated before completing the interaction
+
 ### Memory Components:
 
 1. **Memory Manager**: Handles CRUD operations for memory using langmem
 2. **Memory Retrieval**: Loads relevant memories at conversation start
 3. **Memory Extraction**: Identifies new memory items from conversations
 4. **Memory Update**: Persists changes to the memory store
+
+### Tool Components:
+
+1. **Food Ordering**: Processes food orders and sends them via Telegram
+2. **Podcast Recommendations**: Searches for podcasts using the ListenNotes API
+3. **News Search**: Retrieves recent news articles on various topics
+4. **Direct Response Handler**: Handles common commands without LLM involvement
 
 ### Memory Schema:
 
@@ -71,7 +92,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-4. Add your OpenAI API key to the `.env` file
+4. Add your OpenAI API key and other API keys to the `.env` file
 
 ## Usage
 
@@ -127,6 +148,12 @@ python main.py --debug "What's happening in world news today?"
 python main.py --visualize
 ```
 
+This generates a visual representation of the LangGraph workflow architecture and saves it as `info_assistant_workflow.png`.
+
+![LangGraph Workflow Architecture](info_assistant_workflow.png)
+
+The visualization shows the complete flow of information through the system, including memory operations, task routing, and specialized task processing nodes.
+
 ### Memory Commands
 
 While in interactive mode, you can use these special commands:
@@ -151,17 +178,42 @@ print(response)
 
 ## Advanced Features
 
-### Memory Confidence
+### Memory Features
+
+#### Memory Confidence
 
 The system tracks confidence scores for each memory item, updating information only when new data has higher confidence.
 
-### Memory Context
+#### Memory Context
 
 Memory is retrieved contextually based on the current conversation, finding the most relevant items from the user's history.
 
-### Conversation Summarization
+#### Conversation Summarization
 
 After each conversation, the system creates a summary that can be retrieved in future interactions, helping with continuity.
+
+### Task Features
+
+#### Food Ordering
+
+The assistant can process food orders by:
+- Extracting order details from natural language input
+- Formatting the order for transmission
+- Sending the order details to a designated recipient via Telegram
+
+#### Podcast Recommendations
+
+The assistant can recommend podcasts by:
+- Understanding the user's interests (from memory and current request)
+- Searching for relevant podcasts using the ListenNotes API
+- Providing details including episode titles, descriptions, and links
+
+#### News Search
+
+The assistant can retrieve news by:
+- Identifying the news topic from the user's query
+- Searching for recent and relevant news articles
+- Summarizing key points from multiple sources
 
 ## 📁 Project Structure
 
@@ -171,13 +223,19 @@ After each conversation, the system creates a summary that can be retrieved in f
   - `workflow.py`: Main workflow logic and node definitions
   - `state.py`: State management for the workflow
   - `nodes.py`: Additional node functions
+  - `transitions.py`: State transition logic between nodes
+  - `schemas.py`: Data models and schemas for the workflow
+- `memory/`: Memory system components
+  - `memory_manager.py`: Core memory management functionality
+  - `memory_nodes.py`: LangGraph nodes for memory operations
 - `tools/`: Specialized tools for gathering information
+  - `food_tools.py`: Tools for processing food orders
   - `podcast_tools.py`: Tools for podcast recommendations
   - `news_tools.py`: Tools for retrieving recent news
-  - *Add your custom tools here*
 - `utils/`: Helper utilities
   - `formatting.py`: Response formatting functions
   - `middleware.py`: API middleware for rate limiting, caching, and connection pooling
+  - `direct_response.py`: Handler for direct commands without LLM
 - `config.py`: Configuration settings
 - `visualize_graph.py`: Utility to visualize the workflow architecture
 - `client_integration.md`: Guide for client-side integration
@@ -185,6 +243,8 @@ After each conversation, the system creates a summary that can be retrieved in f
 - `Procfile` & `render.yaml`: Configuration files for Render deployment
 
 ## 🔧 Extending the System
+
+### Adding New Tools
 
 To add a new tool to the assistant:
 
@@ -198,12 +258,27 @@ To add a new tool to the assistant:
 
 To add new types of memory, extend the `UserMemorySchema` class in `memory/memory_manager.py` and add appropriate extraction and formatting methods.
 
+### Adding New Task Types
+
+To add new task types:
+
+1. Create a new node function in `graph/nodes.py`
+2. Add the node to the workflow in `graph/workflow.py`
+3. Update the task routing logic to recognize the new task type
+4. Implement any necessary tools for the task
+
 ## 🧪 Testing
 
 Use the included test notebook to explore the assistant's capabilities:
 
 ```bash
 jupyter notebook test.ipynb
+```
+
+A test file for memory functionality is also provided:
+
+```bash
+python test_memory.py
 ```
 
 ## 📋 Requirements
@@ -214,6 +289,7 @@ jupyter notebook test.ipynb
 - OpenAI API key (or compatible model provider)
 - Tavily API key for search capabilities
 - ListenNotes API key for podcast recommendations
+- Telegram Bot Token (for food ordering functionality)
 
 ### Additional Requirements for API Service
 
@@ -231,6 +307,10 @@ Create a `.env` file in the root directory with the following variables:
 OPENAI_API_KEY=your_openai_key
 TAVILY_API_KEY=your_tavily_key
 LISTENNOTES_API_KEY=your_listennotes_key
+
+# Telegram Integration (for food ordering)
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_CHAT_ID=your_telegram_chat_id
 
 # API Service Configuration (optional)
 API_KEYS=your_api_key1,your_api_key2
@@ -254,3 +334,5 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 - Built with [LangGraph](https://github.com/langchain-ai/langgraph)
 - Uses [Tavily](https://tavily.com/) for search capabilities
+- Uses [ListenNotes API](https://www.listennotes.com/api/) for podcast recommendations
+- Uses Telegram API for food order transmission
