@@ -3,6 +3,8 @@ Middleware for the Dastyar Assistant API.
 
 This module provides middleware functionality for rate limiting, caching,
 and other performance optimizations for the FastAPI application.
+
+It also includes LangGraph middleware functions for state management.
 """
 import time
 from typing import Callable, Dict, Any, Optional
@@ -18,6 +20,60 @@ import logging
 from config import API_RATE_LIMIT
 
 logger = logging.getLogger("dastyar-middleware")
+
+# === LangGraph Middleware Functions ===
+
+def add_metadata(state: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Add metadata to the state like timestamps and version information.
+    
+    This middleware runs after each node to track state changes and maintain
+    versioning across the workflow.
+    
+    Args:
+        state: The current state dictionary
+        
+    Returns:
+        Updated state with metadata added
+    """
+    # Add timestamp if not present
+    if "metadata" not in state:
+        state["metadata"] = {}
+    
+    # Update the timestamp
+    state["metadata"]["last_updated"] = datetime.now().isoformat()
+    
+    # Track version
+    if "state_version" not in state:
+        state["state_version"] = 1
+    else:
+        state["state_version"] += 1
+    
+    return state
+
+def limit_conversation_history(state: Dict[str, Any], max_messages: int = 20) -> Dict[str, Any]:
+    """
+    Limit the conversation history to prevent the state from growing too large.
+    
+    Args:
+        state: The current state dictionary
+        max_messages: Maximum number of messages to keep
+        
+    Returns:
+        Updated state with limited conversation history
+    """
+    if "messages" in state and len(state["messages"]) > max_messages:
+        # Keep the most recent messages
+        state["messages"] = state["messages"][-max_messages:]
+        
+        # Update metadata to indicate truncation
+        if "metadata" not in state:
+            state["metadata"] = {}
+        state["metadata"]["history_truncated"] = True
+        
+    return state
+
+# === API Middleware Classes ===
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """

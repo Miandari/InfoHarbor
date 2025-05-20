@@ -14,6 +14,9 @@ from graph.workflow import create_info_assistant, ConfigSchema
 from graph.state import InfoAssistantState  # Import state type from your state.py file
 from langgraph.graph import StateGraph, END  # Import StateGraph and END from langgraph
 
+# Import the new centralized state transitions module
+from graph.transitions import StateTransitions
+
 # Import debug utilities
 from utils.direct_response import set_debug_mode, debug_log, set_verbose_mode
 
@@ -50,31 +53,16 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
             # Process the food order using invoke() instead of direct calling
             result = process_food_order.invoke({"order_text": query})
             
-            # Format a nice response with order confirmation
-            response = "Thank you! I've sent your food order via Telegram. Here's what I sent:\n\n" + \
-                      f"{query}\n\n" + \
-                      "Your order has been submitted. Is there anything else you need help with?"
+            # Use the centralized state transition function for food order completion
+            updated_state = StateTransitions.handle_food_order_completion(state, query, result)
             
-            # Update the state
-            food_order_history = state.get("food_order_history", [])
-            food_order_history.append({"order_text": query})
-            
-            updated_state = {
-                **state,
-                "messages": state["messages"] + [AIMessage(content=response)],
-                "current_task": "food_order",
-                "last_tool_used": "food_order_tool",
-                "food_order_state": "completed",
-                "food_order_history": food_order_history,
-                "tool_results": {
-                    "type": "food_order",
-                    "data": result,
-                    "pending": False
-                }
-            }
+            # Extract the response from the updated state
+            ai_messages = [msg for msg in updated_state["messages"] if isinstance(msg, AIMessage)]
+            response = ai_messages[-1].content if ai_messages else "Your food order has been processed."
             
             debug_log("Food order processed directly")
             return response, updated_state
+            
         except Exception as e:
             debug_log(f"Error processing food order: {str(e)}")
     
@@ -93,37 +81,20 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
     
     if state is None:
         debug_log("Creating new state (first turn)")
-        # Start a new conversation with initial state
-        messages = [HumanMessage(content=query)]
+        # Use the centralized state creation function to get a fresh state
+        initial_state = StateTransitions.create_clean_state()
         
-        # Create context with conversation ID if provided
-        context = {}
+        # Add the first message
+        initial_state["messages"] = [HumanMessage(content=query)]
+        
+        # Add conversation ID if provided
         if conversation_id:
-            context["conversation_id"] = conversation_id
+            initial_state["context"] = {"conversation_id": conversation_id}
             
-        # Initial state matching InfoAssistantState structure
-        initial_state = {
-            "messages": messages,
-            "podcast_history": [],
-            "news_history": [],
-            "food_order_history": [],
-            "food_order_state": None,
-            "current_task": None,
-            "last_tool_used": None,
-            "context": context,
-            "tool_results": {}
-        }
-        
         # Check if this is a food ordering intent
-        query_lower = query.lower()
-        food_order_keywords = ["order food", "order a pizza", "food delivery", "order pizza", "get food", 
-                          "place an order", "hungry", "deliver food", "takeout", "food order",
-                          "pizza", "want to order", "want pizza"]
-                          
-        is_food_order = any(keyword in query_lower for keyword in food_order_keywords) or \
-                      ("want" in query_lower and "pizza" in query_lower)
-                      
-        if is_food_order:
+        intent = StateTransitions.determine_intent(query)
+        
+        if intent == "food_order":
             debug_log("Food ordering intent detected in first message")
             response = "I'd be happy to help you order food! Please provide your complete order details including:\n\n" + \
                   "1. Restaurant name\n" + \
@@ -132,20 +103,23 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
                   "4. Delivery address (if applicable)\n" + \
                   "5. Any special instructions"
                   
-            updated_state = {
+            # Use state transitions to update state
+            initial_state = {
                 **initial_state,
-                "messages": messages + [AIMessage(content=response)],
+                "messages": initial_state["messages"] + [AIMessage(content=response)],
                 "current_task": "food_order", 
                 "food_order_state": "collecting_details"
             }
             
             debug_log("Food ordering prompt sent directly")
-            return response, updated_state
-            
+            return response, initial_state
     else:
         # Continue existing conversation
         messages_count = len(state['messages']) if 'messages' in state else 0
         debug_log(f"Continuing conversation with existing state. Message count before: {messages_count}")
+        
+        # Use the centralized state transitions to handle task transitions
+        state = StateTransitions.transition_from_task(state, query)
         
         # Check if the previous exchange was about food ordering (prompt sent, now getting details)
         if state.get("current_task") == "food_order" and state.get("food_order_state") == "collecting_details":
@@ -156,30 +130,14 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
                 # Process the food order using invoke() instead of direct calling
                 result = process_food_order.invoke({"order_text": query})
                 
-                # Format a nice response with order confirmation
-                response = "Thank you! I've sent your food order via Telegram. Here's what I sent:\n\n" + \
-                          f"{query}\n\n" + \
-                          "Your order has been submitted. Is there anything else you need help with?"
+                # Use the centralized state transition function for food order completion
+                updated_state = StateTransitions.handle_food_order_completion(state, query, result)
                 
-                # Update the state
-                food_order_history = state.get("food_order_history", [])
-                food_order_history.append({"order_text": query})
+                # Extract the response from the updated state
+                ai_messages = [msg for msg in updated_state["messages"] if isinstance(msg, AIMessage)]
+                response = ai_messages[-1].content if ai_messages else "Your food order has been processed."
                 
-                updated_state = {
-                    **state,
-                    "messages": state["messages"] + [HumanMessage(content=query), AIMessage(content=response)],
-                    "current_task": "food_order",
-                    "last_tool_used": "food_order_tool",
-                    "food_order_state": "completed",
-                    "food_order_history": food_order_history,
-                    "tool_results": {
-                        "type": "food_order",
-                        "data": result,
-                        "pending": False
-                    }
-                }
-                
-                debug_log("Food order processed successfully")
+                debug_log("Food order processed directly")
                 return response, updated_state
                 
             except Exception as e:
@@ -207,7 +165,13 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
             "current_task": state.get("current_task"),
             "last_tool_used": state.get("last_tool_used"),
             "context": state.get("context", {}),
-            "tool_results": state.get("tool_results", {})
+            "tool_results": state.get("tool_results", {}),
+            "reasoning": state.get("reasoning", []),
+            "next_actions": state.get("next_actions", []),
+            "working_memory": state.get("working_memory", {}),
+            "pending_tools": state.get("pending_tools", []),
+            "reflection": state.get("reflection", None),
+            "state_version": state.get("state_version", 0) + 1  # Increment version number
         }
     
     # Call the graph with the config parameter - critical for LangGraph Cloud/Studio
@@ -221,6 +185,12 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
     result_msg_count = len(result.get("messages", []))
     added_msg_count = result_msg_count - original_msg_count
     debug_log(f"Messages added during processing: {added_msg_count}")
+    
+    # Log ReAct-related information for debugging
+    reasoning_count = len(result.get("reasoning", []))
+    debug_log(f"Reasoning steps recorded: {reasoning_count}")
+    if result.get("reflection"):
+        debug_log(f"Reflection: {result.get('reflection')[:100]}...")
     
     # Check for newly added AI messages
     ai_messages = [msg for msg in result.get("messages", [])[-added_msg_count:] 
@@ -255,7 +225,8 @@ def run_info_assistant(query: str, state=None, conversation_id: Optional[str] = 
 
 def interactive_chat_session():
     """Run an interactive chat session with the agent."""
-    print("\nWelcome to the Information Assistant!")
+    print("\nWelcome to the Information Assistant with ReAct Pattern!")
+    print("This assistant uses reasoning + action pattern for improved problem-solving.")
     print("Type 'exit' or 'quit' to end the session.")
     print("Type 'clear' to start a new conversation.\n")
     

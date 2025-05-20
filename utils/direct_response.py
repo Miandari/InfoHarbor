@@ -41,6 +41,41 @@ def debug_log(message):
         timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
         f.write(f"[{timestamp}] {message}\n")
 
+def get_direct_response(message: str) -> Optional[str]:
+    """
+    Check if a message should get a direct response without going through the LangGraph workflow.
+    This is used for handling simple queries that don't need the full workflow.
+    
+    Args:
+        message: The user's message
+        
+    Returns:
+        A direct response string, or None if the message should be processed by the workflow
+    """
+    # Convert to lowercase for easier matching
+    message_lower = message.lower().strip()
+    
+    # Handle direct commands and simple questions
+    if message_lower in ["hello", "hi", "hey"]:
+        return "Hello! How can I assist you today?"
+    
+    elif message_lower in ["bye", "goodbye", "exit"]:
+        return "Goodbye! Feel free to come back if you need any assistance."
+    
+    elif message_lower in ["thank you", "thanks"]:
+        return "You're welcome! Is there anything else you need help with?"
+    
+    elif message_lower == "help":
+        return ("I can help you with several things:\n"
+                "- Get news on specific topics\n"
+                "- Find podcast recommendations\n"
+                "- Order food\n"
+                "- Answer general questions\n\n"
+                "Just let me know what you're interested in!")
+                
+    # No direct response needed, let the workflow handle it
+    return None
+
 def get_direct_answer(question: str, model_name: Optional[str] = None) -> str:
     """
     Get a direct answer to a question using the OpenAI API.
