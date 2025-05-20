@@ -10,6 +10,7 @@ This module implements best practices for LangGraph state management by:
 import operator
 from typing import Dict, Any, List, Optional, Union, TypedDict
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+import uuid
 from graph.state import InfoAssistantState
 
 class StateTransitions:
@@ -228,7 +229,7 @@ class StateTransitions:
             A clean state with reinitialized fields
         """
         if previous_state:
-            # Keep conversation history but reset task-specific state
+            # Keep conversation history and user memory but reset task-specific state
             return {
                 **previous_state,
                 "current_task": None,
@@ -240,7 +241,9 @@ class StateTransitions:
                 "reflection": None
             }
         else:
-            # Create completely new state
+            # Create completely new state with a default user ID
+            default_user_id = f"user_{uuid.uuid4().hex[:8]}"
+            
             return {
                 "messages": [],
                 "podcast_history": [],
@@ -249,80 +252,77 @@ class StateTransitions:
                 "food_order_state": None,
                 "current_task": None,
                 "last_tool_used": None,
+                "user_id": default_user_id,  # Add default user ID
+                "user_memory": {},           # Initialize empty user memory
+                "memory_updates": [],        # Initialize empty memory updates
                 "context": {},
                 "tool_results": {},
                 "reasoning": [],
                 "next_actions": [],
                 "working_memory": {},
                 "pending_tools": [],
-                "reflection": None
+                "reflection": None,
+                "state_version": 1
             }
-            
+    
     @staticmethod
-    def add_to_pending_tools(state: InfoAssistantState, tool_name: str) -> InfoAssistantState:
+    def identify_user(state: InfoAssistantState, user_id: str) -> InfoAssistantState:
         """
-        Add a tool to the pending_tools list if not already present.
+        Associate a specific user ID with the current conversation state.
         
         Args:
             state: Current state
-            tool_name: The name of the tool to add
+            user_id: User identifier
             
         Returns:
-            Updated state with tool added to pending_tools
+            Updated state with user ID
         """
-        pending_tools = state.get("pending_tools", [])
-        
-        # Strip _tools suffix if present for consistency
-        tool_base_name = tool_name.replace("_tools", "")
-        
-        # Only add if not already in the list
-        if tool_base_name not in pending_tools:
-            pending_tools = pending_tools + [tool_base_name]
-            
         return {
             **state,
-            "pending_tools": pending_tools
+            "user_id": user_id
         }
     
     @staticmethod
-    def remove_from_pending_tools(state: InfoAssistantState, tool_name: str) -> InfoAssistantState:
+    def add_memory_item(state: InfoAssistantState, memory_item: Dict[str, Any]) -> InfoAssistantState:
         """
-        Remove a tool from the pending_tools list.
+        Add a memory item to the memory updates list.
         
         Args:
             state: Current state
-            tool_name: The name of the tool to remove
+            memory_item: Memory item with type, content, etc.
             
         Returns:
-            Updated state with tool removed from pending_tools
+            Updated state with memory item added to updates
         """
-        pending_tools = state.get("pending_tools", [])
-        
-        # Strip _tools suffix if present for consistency
-        tool_base_name = tool_name.replace("_tools", "")
-        
-        # Filter out the tool
-        updated_pending_tools = [tool for tool in pending_tools if tool != tool_base_name]
-        
+        memory_updates = state.get("memory_updates", [])
         return {
             **state,
-            "pending_tools": updated_pending_tools
+            "memory_updates": memory_updates + [memory_item]
         }
     
     @staticmethod
-    def clear_pending_tools(state: InfoAssistantState) -> InfoAssistantState:
+    def add_memory_context_to_reasoning(state: InfoAssistantState) -> InfoAssistantState:
         """
-        Clear all pending tools.
+        Add memory context to the agent's reasoning chain.
         
         Args:
             state: Current state
             
         Returns:
-            Updated state with empty pending_tools list
+            Updated state with memory context in reasoning
         """
+        # Get memory context from state
+        memory_context = state.get("context", {}).get("memory_context", "")
+        if not memory_context:
+            return state
+            
+        # Add memory context to reasoning
+        reasoning = state.get("reasoning", [])
+        reasoning.append(f"RELEVANT USER MEMORY:\n{memory_context}")
+        
         return {
             **state,
-            "pending_tools": []
+            "reasoning": reasoning
         }
         
     @staticmethod
@@ -347,8 +347,28 @@ class StateTransitions:
         if tool_type:
             working_memory[f"{tool_type}_error"] = error_message
         
+        # Format a friendly error message for the user
+        user_friendly_error = "I'm sorry, but I encountered a technical issue while processing your request. "
+        
+        if tool_type == "food_order":
+            user_friendly_error += "There was a problem with the food ordering system. Let's try again with more details."
+        elif tool_type == "podcast":
+            user_friendly_error += "I couldn't retrieve the podcast information you requested. Would you like to try a different search?"
+        elif tool_type == "news":
+            user_friendly_error += "I couldn't access the latest news at the moment. Please try again in a moment."
+        elif tool_type == "memory":
+            # Don't expose memory errors to the user, just continue the conversation
+            user_friendly_error = "I'd be happy to continue our conversation. What else can I help you with?"
+        else:
+            user_friendly_error += "Let me try a different approach to help you."
+        
+        # Add the error response to messages
+        messages = state.get("messages", [])
+        messages.append(AIMessage(content=user_friendly_error))
+        
         return {
             **state,
+            "messages": messages,
             "tool_results": {
                 "type": tool_type or "general",
                 "error": error_message,

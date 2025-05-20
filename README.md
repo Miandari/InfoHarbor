@@ -1,115 +1,79 @@
-# Information Assistant with LangGraph 🤖
+# LangGraph Memory-Enhanced Information Assistant
 
-A versatile conversational assistant framework powered by LangGraph, designed for modular tool integration with an expandable architecture.
+A conversational AI assistant built with LangGraph that uses persistent memory to remember user information across conversations.
 
+## Features
 
+- **Long-Term Memory**: Remembers user preferences, facts, and conversation history across sessions
+- **Multi-Task Capabilities**: Can handle food ordering, podcast recommendations, and news searches
+- **LangGraph Workflow**: Uses a directed graph architecture for task routing and processing
+- **ReAct Pattern**: Implements reasoning + action pattern for complex tasks
+- **Persistent Storage**: Uses langmem for efficient vector storage of memory items
 
-## 🎯 Overview
+## Memory System Architecture
 
-This project demonstrates how to build an intelligent information assistant using LangGraph, a library for creating stateful multi-agent workflows. The assistant currently provides:
+The memory system integrates with the LangGraph workflow to provide personalized responses based on user history:
 
-- 🎧 **Podcast Recommendations**: Find podcasts based on interests, topics, or similar to existing podcasts
-- 📰 **News Updates**: Get recent news on various topics
-- 💬 **Conversational Interface**: Natural language interaction with context retention
-
-These initial tools showcase the system's capabilities, with the architecture designed for easy integration of additional tools and information sources.
-
-## 🛠️ Architecture
-
-The application uses a flexible LangGraph workflow with a modular design:
-
-- **Main Agent**: Central router that intelligently dispatches requests to appropriate tools based on user queries
-- **Tool Nodes**: Specialized modules that can be easily added to expand system capabilities
-- **Response Handler**: Formats information into coherent, conversational responses
-- **State Management**: Maintains context across interactions
-
-### System Workflow
-
-![Info Assistant Workflow](info_assistant_workflow.png)
-
-The diagram above illustrates the system's workflow architecture, showing how queries are processed through the main agent and routed to specialized tool nodes.
-
-## 🌐 API Service
-
-The Dastyar assistant can be deployed as a REST API service, allowing other applications to access its capabilities.
-
-### API Endpoints
-
-- **POST /chat** - Process a chat message and return a response
-- **POST /chat/stream** - Stream chat responses for real-time UI updates
-- **GET /conversation/:id** - Get conversation history by ID
-- **GET /tools** - List available tools
-- **POST /tools/toggle** - Enable/disable specific tools
-- **GET /health** - Health check endpoint for monitoring
-
-### Running the API
-
-```bash
-# Install additional dependencies
-pip install fastapi uvicorn websockets redis python-jose python-multipart
-
-# Start the API server
-python api.py
+```
+┌────────────────┐      ┌─────────────────┐      ┌────────────────┐
+│ Memory         │      │  Main Agent     │      │ Tool Execution │
+│ Retrieval      ├─────►│  (with memory   ├─────►│                │
+└───────┬────────┘      │   context)      │      └────────┬───────┘
+        │               └─────────────────┘               │
+        ▼                                                 ▼
+┌────────────────┐                               ┌────────────────┐
+│ Memory         │                               │ Memory         │
+│ Context Added  │                               │ Extraction     │
+└────────────────┘                               └──────┬─────────┘
+                                                       │
+                                                       ▼
+                                                ┌────────────────┐
+                                                │ Memory         │
+                                                │ Update         │
+                                                └────────────────┘
 ```
 
-The API will be available at `http://localhost:8000`.
+### Memory Components:
 
-### API Documentation
+1. **Memory Manager**: Handles CRUD operations for memory using langmem
+2. **Memory Retrieval**: Loads relevant memories at conversation start
+3. **Memory Extraction**: Identifies new memory items from conversations
+4. **Memory Update**: Persists changes to the memory store
 
-Once running, API documentation is available at:
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
+### Memory Schema:
 
-### Security Features
+The system stores the following information about each user:
 
-The API includes:
-- API key authentication
-- Rate limiting
-- Input validation
-- Proper error handling
+- **Identity**: User ID and name
+- **Preferences**: Things the user likes and dislikes
+- **Important Facts**: Key facts about the user
+- **Conversation History**: Summaries of past conversations
 
-### Performance Optimizations
+## Setup and Installation
 
-- Connection pooling with Redis
-- Response caching
-- Background processing for state management
-- Streaming responses for real-time updates
+### Prerequisites
 
-### Deployment
+- Python 3.9+
+- OpenAI API key
 
-For production deployment on Render:
-- Follow instructions in `render_deployment_guide.md`
-- Use the provided `render.yaml` for Blueprint deployment
-- Configure environment variables for security and performance
+### Installation
 
-### Client Integration
+1. Clone the repository
+2. Install dependencies:
 
-For details on integrating with a Node.js/React application:
-- Check `client_integration.md` for examples
-- Includes streaming response handling
-- Demonstrates connection pooling and caching techniques
+```bash
+pip install -r requirements.txt
+```
 
-## ⚙️ Installation
+3. Create a `.env` file based on `.env.example`:
 
-1. Clone this repository
-   ```bash
-   git clone [repository-url]
-   cd LangGraph-tool-testing
-   ```
+```bash
+cp .env.example .env
+```
 
-2. Install dependencies
-   ```bash
-   pip install -r requirements.txt
-   ```
+4. Add your OpenAI API key to the `.env` file
 
-3. Set up environment variables (create a `.env` file)
-   ```
-   OPENAI_API_KEY=your_openai_api_key
-   TAVILY_API_KEY=your_tavily_api_key
-   # Add keys for additional tools as needed
-   ```
-
-## 🚀 Usage
+## Usage
 
 ### Running the Assistant
 
@@ -121,6 +85,22 @@ python main.py "What are some good podcasts about ancient history?"
 
 ```bash
 python main.py --interactive
+```
+
+This will generate a unique user ID that you can use to continue the conversation later.
+
+### Single Query Mode
+
+Run a single query:
+
+```bash
+python main.py "What's in the news today?"
+```
+
+To continue with the same user memory in a later session:
+
+```bash
+python main.py --user your_user_id "Tell me about recent podcasts"
 ```
 
 ### Debug Mode
@@ -147,6 +127,14 @@ python main.py --debug "What's happening in world news today?"
 python main.py --visualize
 ```
 
+### Memory Commands
+
+While in interactive mode, you can use these special commands:
+
+- `clear`: Start a new conversation while retaining memory
+- `forget`: Delete all memory data for the current user
+- `exit` or `quit`: End the session
+
 ### Import in Your Python Code
 
 ```python
@@ -160,6 +148,20 @@ print(response)
 response = run_info_assistant("Any updates on that news?", conversation_id="user123")
 print(response)
 ```
+
+## Advanced Features
+
+### Memory Confidence
+
+The system tracks confidence scores for each memory item, updating information only when new data has higher confidence.
+
+### Memory Context
+
+Memory is retrieved contextually based on the current conversation, finding the most relevant items from the user's history.
+
+### Conversation Summarization
+
+After each conversation, the system creates a summary that can be retrieved in future interactions, helping with continuity.
 
 ## 📁 Project Structure
 
@@ -191,6 +193,10 @@ To add a new tool to the assistant:
 3. Update the workflow in `graph/workflow.py` to include your new tool
 4. Add any necessary formatting functions in `utils/formatting.py`
 5. Update environment variables if needed
+
+### Adding New Memory Types
+
+To add new types of memory, extend the `UserMemorySchema` class in `memory/memory_manager.py` and add appropriate extraction and formatting methods.
 
 ## 🧪 Testing
 

@@ -42,6 +42,14 @@ from graph.nodes import (
     prepare_context,
 )
 
+# Import memory nodes
+from memory.memory_nodes import (
+    memory_retrieval_node,
+    memory_extraction_node,
+    memory_update_node,
+    add_memory_context_to_prompt
+)
+
 
 def create_information_graph(override_nodes: Dict[str, Any] = None):
     """
@@ -56,15 +64,27 @@ def create_information_graph(override_nodes: Dict[str, Any] = None):
     # Create graph with state definition
     workflow = StateGraph(InfoAssistantState)
     
-    # Add all the nodes to the graph
+    # Add memory-related nodes
+    workflow.add_node("memory_retrieval", override_nodes["memory_retrieval"] if override_nodes and "memory_retrieval" in override_nodes else memory_retrieval_node)
+    workflow.add_node("add_memory_context", override_nodes["add_memory_context"] if override_nodes and "add_memory_context" in override_nodes else add_memory_context_to_prompt)
+    workflow.add_node("memory_extraction", override_nodes["memory_extraction"] if override_nodes and "memory_extraction" in override_nodes else memory_extraction_node)
+    workflow.add_node("memory_update", override_nodes["memory_update"] if override_nodes and "memory_update" in override_nodes else memory_update_node)
+    
+    # Add all the existing nodes to the graph
     workflow.add_node("route_query", override_nodes["route_query"] if override_nodes and "route_query" in override_nodes else route_query)
     workflow.add_node("prepare_context", override_nodes["prepare_context"] if override_nodes and "prepare_context" in override_nodes else prepare_context)
     workflow.add_node("food_ordering", override_nodes["food_ordering"] if override_nodes and "food_ordering" in override_nodes else food_ordering_node)
     workflow.add_node("podcast_agent", override_nodes["podcast_agent"] if override_nodes and "podcast_agent" in override_nodes else podcast_agent_node)
     workflow.add_node("news_agent", override_nodes["news_agent"] if override_nodes and "news_agent" in override_nodes else news_agent_node)
     
-    # Define the edges of the graph for primary flow
-    workflow.set_entry_point("route_query")
+    # Define the workflow entry point - starts with memory retrieval for user context
+    workflow.set_entry_point("memory_retrieval")
+    
+    # First, retrieve memories for the current user before anything else
+    workflow.add_edge("memory_retrieval", "add_memory_context")
+    
+    # Add memory context to influence reasoning
+    workflow.add_edge("add_memory_context", "route_query")
     
     # Routing from query router node
     workflow.add_conditional_edges(
@@ -79,13 +99,17 @@ def create_information_graph(override_nodes: Dict[str, Any] = None):
         },
     )
     
-    # Define edge for context preparation (for general queries)
-    workflow.add_edge("prepare_context", END)
+    # All execution paths should extract and update memory before completion
+    workflow.add_edge("prepare_context", "memory_extraction")
+    workflow.add_edge("food_ordering", "memory_extraction")
+    workflow.add_edge("podcast_agent", "memory_extraction")
+    workflow.add_edge("news_agent", "memory_extraction")
     
-    # Define edges from specialized agents
-    workflow.add_edge("food_ordering", END)
-    workflow.add_edge("podcast_agent", END)
-    workflow.add_edge("news_agent", END)
+    # Extract memory items from the conversation
+    workflow.add_edge("memory_extraction", "memory_update")
+    
+    # Update user memory store and end
+    workflow.add_edge("memory_update", END)
     
     # Note: middleware is applied manually in the handle_user_input function
     # since the current LangGraph version doesn't support middleware directly
@@ -96,7 +120,7 @@ def create_information_graph(override_nodes: Dict[str, Any] = None):
 create_info_assistant = create_information_graph
 
 
-def handle_user_input(graph: Any, state: Optional[InfoAssistantState], user_message: str) -> InfoAssistantState:
+def handle_user_input(graph: Any, state: Optional[InfoAssistantState], user_message: str, user_id: Optional[str] = None) -> InfoAssistantState:
     """
     Process user input and update the state using the graph.
     
@@ -104,6 +128,7 @@ def handle_user_input(graph: Any, state: Optional[InfoAssistantState], user_mess
         graph: Compiled graph instance
         state: Current state or None for first interaction
         user_message: User's message text
+        user_id: Optional user identifier for memory persistence
         
     Returns:
         Updated state after processing
@@ -111,6 +136,10 @@ def handle_user_input(graph: Any, state: Optional[InfoAssistantState], user_mess
     # Create initial state if none exists
     if state is None:
         state = StateTransitions.create_clean_state()
+        
+    # Set user ID if provided for memory linkage
+    if user_id:
+        state = StateTransitions.identify_user(state, user_id)
     
     # Check if user input should be handled directly (without LLM)
     direct_response = get_direct_response(user_message)
