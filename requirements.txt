@@ -4,6 +4,7 @@ langgraph>=0.0.20
 langchain-openai>=0.0.6
 pydantic>=2.0.0
 python-dotenv>=1.0.0
+langmem>=0.0.1
 
 # API clients
 tavily-python>=0.2.3
