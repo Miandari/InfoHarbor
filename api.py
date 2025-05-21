@@ -184,9 +184,55 @@ async def save_conversation(conversation_id: str, state: Dict[str, Any], metadat
     """Save conversation state to Redis or in-memory store."""
     global redis_pool
     
+    # Create a serializable copy of the state
+    serializable_state = {}
+    
+    # Handle special object types that need custom serialization
+    for key, value in state.items():
+        if key == "messages":
+            # Convert message objects to serializable dictionaries
+            serializable_messages = []
+            for msg in value:
+                if hasattr(msg, "to_dict"):
+                    # Use built-in LangChain serialization if available
+                    msg_dict = msg.to_dict()
+                    serializable_messages.append(msg_dict)
+                elif hasattr(msg, "content") and hasattr(msg, "type"):
+                    # Handle messages with content and type attributes
+                    msg_dict = {
+                        "type": getattr(msg, "type", "unknown"),
+                        "content": getattr(msg, "content", ""),
+                        "additional_kwargs": getattr(msg, "additional_kwargs", {})
+                    }
+                    serializable_messages.append(msg_dict)
+                else:
+                    # Fallback for other objects
+                    msg_dict = {
+                        "type": msg.__class__.__name__,
+                        "content": str(msg)
+                    }
+                    serializable_messages.append(msg_dict)
+            serializable_state["messages"] = serializable_messages
+        else:
+            # Handle other potentially non-serializable objects
+            try:
+                # Test if the value is serializable
+                json.dumps(value)
+                serializable_state[key] = value
+            except (TypeError, OverflowError):
+                # If not serializable, convert to string or simple representation
+                if hasattr(value, "to_dict"):
+                    serializable_state[key] = value.to_dict()
+                elif isinstance(value, list):
+                    serializable_state[key] = [str(item) if not isinstance(item, (str, int, float, bool, type(None), dict, list)) else item for item in value]
+                elif isinstance(value, dict):
+                    serializable_state[key] = {k: str(v) if not isinstance(v, (str, int, float, bool, type(None), dict, list)) else v for k, v in value.items()}
+                else:
+                    serializable_state[key] = str(value)
+    
     # Prepare conversation data
     conversation_data = {
-        "state": json.dumps(state),
+        "state": json.dumps(serializable_state),
         "updated_at": datetime.now().isoformat(),
         "metadata": json.dumps(metadata or {})
     }
@@ -194,8 +240,15 @@ async def save_conversation(conversation_id: str, state: Dict[str, Any], metadat
     # Extract messages for easier retrieval
     messages = []
     for msg in state.get("messages", []):
+        msg_dict = None
+        
         if hasattr(msg, "to_dict"):
             msg_dict = msg.to_dict()
+        elif hasattr(msg, "type") and hasattr(msg, "content"):
+            msg_dict = {
+                "type": getattr(msg, "type", "unknown"),
+                "content": getattr(msg, "content", "")
+            }
         else:
             # Handle different message formats
             msg_dict = {
@@ -204,7 +257,7 @@ async def save_conversation(conversation_id: str, state: Dict[str, Any], metadat
             }
         
         messages.append({
-            "role": "user" if msg_dict.get("type") == "human" else "assistant",
+            "role": "user" if msg_dict.get("type", "").lower() == "human" else "assistant",
             "content": msg_dict.get("content", ""),
             "timestamp": datetime.now().isoformat()
         })
@@ -258,7 +311,7 @@ async def save_conversation(conversation_id: str, state: Dict[str, Any], metadat
         
     # Update the conversation
     save_conversation.conversation_store[conversation_id].update({
-        "state": state,
+        "state": serializable_state,  # Use the serializable version here
         "messages": messages,
         "updated_at": datetime.now().isoformat(),
         "metadata": metadata or {}
