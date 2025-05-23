@@ -48,7 +48,7 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
-
+ElderCareAgent.code-workspace
 # Log files
 debug_log.txt
 logs/
