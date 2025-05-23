@@ -1,21 +1,46 @@
-# Core dependencies
-langchain>=0.1.0
-langgraph>=0.0.20
-langchain-openai>=0.0.6
-pydantic>=2.0.0
-python-dotenv>=1.0.0
-langmem>=0.0.1
-numpy>=1.24.0  # Required for optimized vector operations in InMemoryStore
+langchain
+langchain-openai
+langgraph
+langchain-community
 
-# API clients
-tavily-python>=0.2.3
-requests>=2.31.0
+# OpenAI
+openai
+# FastAPI and Server
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-multipart
 
-# API Framework
-fastapi>=0.104.0
-uvicorn>=0.24.0
-websockets>=12.0
-redis>=5.0.1
-python-jose>=3.3.0
-python-multipart>=0.0.6
-starlette>=0.31.1
+# SSE Support
+sse-starlette
+
+# Async Support
+aiohttp
+asyncio
+
+# Database
+aiosqlite
+
+# Utilities
+python-dotenv
+pyyaml
+python-dateutil
+# Logging
+colorlog
+# Development Tools
+pytest
+pytest-asyncio
+flake8
+isort
+# Memory/Embeddings (optional, for production)
+# faiss-cpu==1.7.4
+# sentence-transformers==2.2.2
+
+# Deployment
+gunicorn
+
+# Type Checking
+mypy
+types-pyyaml
+types-python-dateutil
