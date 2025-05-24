@@ -1,50 +1,48 @@
 """
-Agent state definition for LangGraph
+State definition for the LangGraph agent workflow
 """
-from typing import TypedDict, List, Dict, Any, Optional
+from typing import Dict, Any, List, Optional, TypedDict, Annotated
 from langchain_core.messages import BaseMessage
-from datetime import datetime
+from langgraph.graph.message import add_messages
 
 
 class AgentState(TypedDict):
-    """State schema for the elderly assistant agent"""
+    """State object that flows through the LangGraph workflow"""
     
-    # Core conversation state
-    messages: List[BaseMessage]
+    # Core conversation data - using add_messages for LangGraph Studio compatibility
+    messages: Annotated[List[BaseMessage], add_messages]
     conversation_id: str
     user_id: str
     
-    # Memory context
+    # Memory and context
     memory_context: Optional[Dict[str, Any]]
-    memory_updates: List[Dict[str, Any]]  # Track what was stored
-    
-    # Enhanced context from preprocessor
+    memory_updates: List[Dict[str, Any]]
     enhanced_context: Optional[Dict[str, Any]]
     system_prompt: str
     
-    # Tool tracking
+    # Tool usage
     tools_used: List[str]
     tool_results: Dict[str, Any]
     
-    # Processing metadata
+    # Timing and flow control
     start_time: float
     preprocessing_done: bool
     agent_done: bool
     postprocessing_done: bool
     
-    # Elder-specific features
+    # User preferences and modes
     elder_mode: bool
     requires_clarification: bool
     health_check_needed: bool
+    platform: str
+    response_format: str
     
-    # Response formatting
-    platform: str  # web, api, etc.
-    response_format: str  # text, markdown, etc.
-    
-    # Final output
+    # Output and metadata
     final_response: Optional[Dict[str, Any]]
     metadata: Dict[str, Any]
-    
-    # Error handling
     error: Optional[str]
+    
+    # Retry handling
     retry_count: int
+    needs_revision: Optional[bool]
+    revision_feedback: Optional[List[str]]

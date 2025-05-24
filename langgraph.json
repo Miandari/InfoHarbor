@@ -1,0 +1,10 @@
+{
+  "dependencies": [
+    "./requirements.txt"
+  ],
+  "graphs": {
+    "elder_care_agent": "./src/agent/graph.py:create_agent_graph"
+  },
+  "env": ".env",
+  "python_version": "3.12"
+}

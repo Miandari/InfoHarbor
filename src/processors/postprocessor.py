@@ -1,233 +1,234 @@
 """
-Preprocessor node for input enhancement and memory retrieval
+Postprocessor node for response formatting and memory updates
 """
 import asyncio
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List
 import logging
-import yaml
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage
 
 from src.agent.state import AgentState
-from src.memory.manager import MemoryManager
-from src.config.settings import settings
+from src.memory.manager import MemoryManager, MemoryExtractor
+from src.settings import settings
 
 
-class PreprocessorNode:
-    """Handles input preprocessing and memory context injection"""
+class PostprocessorNode:
+    """Handles response postprocessing and memory updates"""
     
     def __init__(self):
         self.memory_manager = MemoryManager()
-        self.logger = logging.getLogger("preprocessor")
-        self._load_prompts()
-        
-    def _load_prompts(self):
-        """Load personality prompts from YAML"""
-        with open(settings.personality_prompt_path, 'r') as f:
-            self.prompts = yaml.safe_load(f)
+        self.memory_extractor = MemoryExtractor(self.memory_manager)
+        self.logger = logging.getLogger("postprocessor")
     
     async def process(self, state: AgentState) -> AgentState:
-        """Process input and enhance with memory context"""
-        self.logger.info(f"Preprocessing for user {state['user_id']}")
+        """Post-process the agent's response"""
         
-        # Get the latest user message
-        user_message = state["messages"][-1]
+        ai_message = state["messages"][-1]
+        if ai_message.type != "ai":
+            return state
         
-        # Run preprocessing tasks in parallel
-        tasks = [
-            self._retrieve_memory_context(state["user_id"], user_message.content),
-            self._enhance_input(user_message.content),
-            self._check_health_indicators(user_message.content)
-        ]
+        # Convert content to string if it's not already
+        ai_response = ai_message.content
+        if isinstance(ai_response, list):
+            # Extract text content from list format
+            ai_response = self._extract_text_from_content(ai_response)
         
-        memory_context, enhanced_input, health_check = await asyncio.gather(*tasks)
-        
-        # Build enhanced system prompt with memory context
-        system_prompt = self._build_system_prompt(
-            state["user_id"],
-            memory_context,
-            state.get("elder_mode", True)
+        # Process the response
+        processed_response = await asyncio.gather(
+            self._format_response_for_platform(ai_response, state),
+            self._quality_check_response(ai_response, state)
         )
         
-        # Update state
-        state["memory_context"] = memory_context
-        state["enhanced_context"] = {
-            "original_input": user_message.content,
-            "enhanced_input": enhanced_input,
-            "timestamp": datetime.now(),
-            "platform": state.get("platform", "api"),
-            "has_memory": bool(memory_context.get("profile"))
-        }
-        state["health_check_needed"] = health_check
-        state["preprocessing_done"] = True
+        formatted_response, quality_feedback = processed_response
         
-        # Add system message with context
-        if system_prompt:
-            # Insert system message at the beginning if not present
-            if not state["messages"] or not isinstance(state["messages"][0], SystemMessage):
-                state["messages"].insert(0, SystemMessage(content=system_prompt))
-            else:
-                # Update existing system message
-                state["messages"][0] = SystemMessage(content=system_prompt)
+        # Create final response
+        final_response = {
+            "response": formatted_response,
+            "conversation_id": state["conversation_id"],
+            "created_at": datetime.now().isoformat(),
+            "metadata": {
+                "latency_ms": int((datetime.now().timestamp() - state["start_time"]) * 1000),
+                "user_id": state["user_id"],
+                "tools_used": state.get("tools_used", []),
+                "memory_updates_count": len(state.get("memory_updates", [])),
+                "platform": state.get("platform", "api"),
+                "elder_mode": state.get("elder_mode", True)
+            }
+        }
+        
+        # Update state
+        state["final_response"] = final_response
+        state["postprocessing_done"] = True
+        
+        # Check if revision is needed based on quality feedback
+        if quality_feedback.get("needs_revision") and state.get("retry_count", 0) < 2:
+            state["needs_revision"] = True
+            state["revision_feedback"] = quality_feedback.get("issues", [])
+            state["retry_count"] = state.get("retry_count", 0) + 1
         
         return state
     
-    async def _retrieve_memory_context(
+    async def _format_response_for_platform(
         self, 
-        user_id: str, 
-        query: str
-    ) -> Dict[str, Any]:
-        """Retrieve relevant memories for the user"""
-        try:
-            # Get user profile
-            profile = await self.memory_manager.get_user_profile(user_id)
+        response: str, 
+        state: AgentState
+    ) -> str:
+        """Format response based on platform and user preferences"""
+        
+        platform = state.get("platform", "api")
+        elder_mode = state.get("elder_mode", True)
+        
+        # Base formatting
+        formatted = response.strip()
+        
+        if elder_mode:
+            # Elder-friendly formatting
+            formatted = self._apply_elder_friendly_formatting(formatted)
+        
+        if platform == "terminal":
+            # Terminal-specific formatting
+            formatted = self._apply_terminal_formatting(formatted)
+        elif platform == "voice":
+            # Voice-specific formatting (remove markdown, etc.)
+            formatted = self._apply_voice_formatting(formatted)
+        
+        return formatted
+    
+    def _apply_elder_friendly_formatting(self, text: str) -> str:
+        """Apply elder-friendly text formatting"""
+        # Break up long paragraphs
+        sentences = text.split('. ')
+        
+        # Group sentences into shorter paragraphs
+        paragraphs = []
+        current_paragraph = []
+        
+        for sentence in sentences:
+            current_paragraph.append(sentence)
             
-            # Search for relevant memories based on current query
-            relevant_memories = await self.memory_manager.search_memories(
-                user_id, 
-                query, 
-                limit=3
+            # Start new paragraph after 2-3 sentences
+            if len(current_paragraph) >= 3:
+                paragraphs.append('. '.join(current_paragraph) + '.')
+                current_paragraph = []
+        
+        # Add remaining sentences
+        if current_paragraph:
+            paragraphs.append('. '.join(current_paragraph))
+        
+        # Join with double line breaks for readability
+        return '\n\n'.join(paragraphs)
+    
+    def _apply_terminal_formatting(self, text: str) -> str:
+        """Apply terminal-specific formatting"""
+        # Keep markdown for terminal display
+        return text
+    
+    def _apply_voice_formatting(self, text: str) -> str:
+        """Apply voice-specific formatting"""
+        # Remove markdown formatting
+        import re
+        
+        # Remove bold/italic markers
+        text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
+        text = re.sub(r'\*(.*?)\*', r'\1', text)
+        
+        # Remove bullet points and replace with "First, Second, etc."
+        lines = text.split('\n')
+        formatted_lines = []
+        
+        for line in lines:
+            if line.strip().startswith('•') or line.strip().startswith('-'):
+                # Convert bullet to numbered format
+                content = line.strip()[1:].strip()
+                formatted_lines.append(content)
+            else:
+                formatted_lines.append(line)
+        
+        return '\n'.join(formatted_lines)
+    
+    async def _extract_and_store_memories(self, state: AgentState) -> List[Dict[str, Any]]:
+        """Extract and store memories from the conversation"""
+        try:
+            # Get conversation messages
+            messages = []
+            for msg in state["messages"]:
+                if hasattr(msg, 'content'):
+                    messages.append({
+                        "role": msg.__class__.__name__.lower().replace("message", ""),
+                        "content": msg.content
+                    })
+            
+            # Extract memories
+            extracted_memories = await self.memory_extractor.extract_from_conversation(
+                messages=messages,
+                user_id=state["user_id"],
+                conversation_id=state["conversation_id"]
             )
             
-            # Get recent conversation summaries
-            recent_summaries = profile.recent_summaries[:3] if profile.recent_summaries else []
+            # Convert to dict format for response
+            memory_updates = []
+            for memory in extracted_memories:
+                memory_updates.append({
+                    "type": memory.memory_type,
+                    "content": memory.content,
+                    "importance": memory.importance,
+                    "timestamp": memory.created_at.isoformat()
+                })
             
-            return {
-                "profile": profile,
-                "relevant_memories": relevant_memories,
-                "recent_summaries": recent_summaries,
-                "profile_string": profile.to_context_string() if profile else ""
-            }
+            return memory_updates
             
         except Exception as e:
-            self.logger.error(f"Error retrieving memory context: {e}")
-            return {}
+            self.logger.error(f"Memory extraction error: {e}")
+            return []
     
-    async def _enhance_input(self, input_text: str) -> str:
-        """Enhance user input with clarifications"""
-        # For MVP, just clean up the input
-        enhanced = input_text.strip()
-        
-        # Add temporal context for ambiguous queries
-        time_indicators = ["today", "now", "current", "latest"]
-        if any(word in enhanced.lower() for word in time_indicators):
-            enhanced += f" (Current date: {datetime.now().strftime('%Y-%m-%d')})"
-        
-        return enhanced
+    def _extract_text_from_content(self, content_list) -> str:
+        """Extract text content from list format"""
+        text_parts = []
+        for item in content_list:
+            if isinstance(item, str):
+                text_parts.append(item)
+            elif isinstance(item, dict) and 'text' in item:
+                text_parts.append(str(item['text']))
+            elif isinstance(item, dict) and 'content' in item:
+                text_parts.append(str(item['content']))
+        return ' '.join(text_parts) if text_parts else str(content_list)
     
-    async def _check_health_indicators(self, input_text: str) -> bool:
-        """Check if the input contains health-related concerns"""
-        health_keywords = [
-            "pain", "hurt", "medication", "doctor", "sick", 
-            "dizzy", "fall", "emergency", "help", "confused"
-        ]
-        
-        input_lower = input_text.lower()
-        return any(keyword in input_lower for keyword in health_keywords)
-    
-    def _build_system_prompt(
+    async def _quality_check_response(
         self, 
-        user_id: str, 
-        memory_context: Dict[str, Any],
-        elder_mode: bool
-    ) -> str:
-        """Build system prompt with memory context"""
-        # Start with base system prompt
-        base_prompt = self.prompts["system_prompt"].format(
-            agent_name=settings.agent_name,
-            current_date=datetime.now().strftime("%Y-%m-%d"),
-            user_name=memory_context.get("profile", {}).personal_info.name 
-                     if memory_context.get("profile") and memory_context["profile"].personal_info 
-                     else "there"
-        )
+        response: str, 
+        state: AgentState
+    ) -> Dict[str, Any]:
+        """Check response quality and suggest improvements"""
         
-        # Add memory context if available
-        if memory_context.get("profile_string"):
-            memory_prompt = self.prompts["memory_context_prompt"].format(
-                personal_info=self._format_personal_info(memory_context["profile"]),
-                health_info=self._format_health_info(memory_context["profile"]),
-                preferences=self._format_preferences(memory_context["profile"]),
-                important_memories=self._format_important_memories(memory_context["relevant_memories"]),
-                recent_context=self._format_recent_context(memory_context["recent_summaries"])
-            )
-            base_prompt += "\n\n" + memory_prompt
+        issues = []
         
-        # Add elder mode additions if enabled
-        if elder_mode:
-            base_prompt += "\n\n" + self.prompts["elder_mode_additions"]
+        # Check response length
+        if len(response) < 20:
+            issues.append("Response too short")
+        elif len(response) > 1000 and state.get("elder_mode"):
+            issues.append("Response too long for elder mode")
         
-        return base_prompt
-    
-    def _format_personal_info(self, profile) -> str:
-        """Format personal info for prompt"""
-        if not profile or not profile.personal_info:
-            return "No personal information available yet."
+        # Check for appropriate tone
+        if state.get("elder_mode"):
+            # Check for elder-friendly language
+            complex_words = ["utilize", "implement", "facilitate", "optimize"]
+            for word in complex_words:
+                if word.lower() in response.lower():
+                    issues.append(f"Complex word detected: {word}")
         
-        info = profile.personal_info
-        parts = []
+        # Check for health-related safety
+        if state.get("health_check_needed"):
+            safety_phrases = ["contact your doctor", "healthcare provider", "medical advice"]
+            has_safety_warning = any(phrase in response.lower() for phrase in safety_phrases)
+            if not has_safety_warning:
+                issues.append("Health query missing safety disclaimer")
         
-        if info.name:
-            parts.append(f"- Name: {info.name}")
-        if info.preferred_name:
-            parts.append(f"- Preferred name: {info.preferred_name}")
-        if info.age:
-            parts.append(f"- Age: {info.age}")
-        if info.location:
-            parts.append(f"- Location: {info.location}")
-        if info.family_members:
-            parts.append(f"- Family: {', '.join(info.family_members)}")
-            
-        return "\n".join(parts) if parts else "No personal information available."
-    
-    def _format_health_info(self, profile) -> str:
-        """Format health info for prompt"""
-        if not profile or not profile.health_info:
-            return "No health information recorded."
+        # Determine if revision is needed
+        needs_revision = len(issues) > 2  # Only revise if multiple issues
         
-        parts = []
-        for health in profile.health_info:
-            parts.append(f"- Condition: {health.condition}")
-            if health.medications:
-                parts.append(f"  Medications: {', '.join(health.medications)}")
-            if health.allergies:
-                parts.append(f"  Allergies: {', '.join(health.allergies)}")
-                
-        return "\n".join(parts)
-    
-    def _format_preferences(self, profile) -> str:
-        """Format preferences for prompt"""
-        if not profile or not profile.preferences:
-            return "No preferences recorded yet."
-        
-        parts = []
-        for pref in profile.preferences:
-            if pref.likes:
-                parts.append(f"- Likes ({pref.category}): {', '.join(pref.likes)}")
-            if pref.dislikes:
-                parts.append(f"- Dislikes ({pref.category}): {', '.join(pref.dislikes)}")
-                
-        return "\n".join(parts)
-    
-    def _format_important_memories(self, memories) -> str:
-        """Format important memories for prompt"""
-        if not memories:
-            return "No specific relevant memories for this conversation."
-        
-        parts = []
-        for memory in memories[:3]:  # Limit to top 3
-            parts.append(f"- {memory.content}")
-            
-        return "\n".join(parts)
-    
-    def _format_recent_context(self, summaries) -> str:
-        """Format recent conversation summaries"""
-        if not summaries:
-            return "No recent conversations."
-        
-        parts = []
-        for summary in summaries:
-            date_str = summary.created_at.strftime("%Y-%m-%d")
-            parts.append(f"- {date_str}: {summary.summary}")
-            
-        return "\n".join(parts)
+        return {
+            "needs_revision": needs_revision,
+            "issues": issues,
+            "quality_score": max(0, 10 - len(issues))
+        }

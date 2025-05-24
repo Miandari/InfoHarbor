@@ -69,7 +69,7 @@ class HealthReminderTool(BaseTool):
             if action == "check_medication":
                 result = self._check_medications(user_health)
             elif action == "set_reminder":
-                result = self._set_health_reminder(query, context)
+                result = self._set_health_reminder(query, context or {})
             elif action == "health_tip":
                 result = self._provide_health_tip(query, user_health)
             elif action == "symptom_check":

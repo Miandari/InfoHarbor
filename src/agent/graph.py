@@ -3,11 +3,11 @@ Main LangGraph workflow for the elderly assistant agent
 """
 import time
 import uuid
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import logging
+from datetime import datetime
 
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolExecutor
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -19,12 +19,14 @@ from src.processors.postprocessor import PostprocessorNode
 from src.tools.base import tool_registry
 from src.tools.podcast_tool import PodcastDiscoveryTool
 from src.tools.news_tool import NewsDiscoveryTool
-from src.config.settings import settings
+from src.tools.health_tool import HealthReminderTool
+from src.settings import settings
 
 
 # Register tools
 tool_registry.register(PodcastDiscoveryTool())
 tool_registry.register(NewsDiscoveryTool())
+tool_registry.register(HealthReminderTool())
 
 
 def create_agent_graph():
@@ -156,7 +158,9 @@ class ElderlyAssistantAgent:
             "final_response": None,
             "metadata": {},
             "error": None,
-            "retry_count": 0
+            "retry_count": 0,
+            "needs_revision": None,
+            "revision_feedback": None
         }
         
         try:
@@ -246,7 +250,9 @@ class ElderlyAssistantAgent:
             "final_response": None,
             "metadata": {},
             "error": None,
-            "retry_count": 0
+            "retry_count": 0,
+            "needs_revision": None,
+            "revision_feedback": None
         }
         
         try:
@@ -309,3 +315,7 @@ class ElderlyAssistantAgent:
                 "error": str(e),
                 "done": True
             }
+
+
+# Export the graph function for LangGraph Studio
+graph = create_agent_graph()
